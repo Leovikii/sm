@@ -1,63 +1,127 @@
 name: Compile Sing-Box Rules
 
+# 允许 workflow 使用 GITHUB_TOKEN 推送编译结果
+permissions:
+  contents: write
+
 on:
   push:
     paths:
-      - 'rule-set/**/*.json'  # 监听 rule-set 文件夹中的所有 JSON 文件的新增或修改
+      - 'rule-set/**/*.json'
 
 jobs:
   compile_rules:
-    runs-on: ubuntu-latest  # 使用最新版的 Ubuntu 运行环境
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2  # 检出代码
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y wget build-essential jq  # 安装 wget 和 jq
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget jq tar
 
-    - name: Download Sing-Box latest release
-      run: |
-        # 获取 Sing-Box 最新 Release 的版本信息
-        latest_version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
-        echo "Latest Sing-Box version: $latest_version"
-        
-        # 去除版本号前的 'v' 前缀（例如 'v1.12.1' -> '1.12.1'）
-        version_without_v=${latest_version#v}
-        
-        # 构造正确的下载链接
-        download_url="https://github.com/SagerNet/sing-box/releases/download/$latest_version/sing-box-$version_without_v-linux-amd64.tar.gz"
-        
-        # 下载 Sing-Box 的最新发布版本
-        wget $download_url
-        
-        # 解压下载的文件
-        tar -zxvf "sing-box-$version_without_v-linux-amd64.tar.gz"
-        
-        # 清理已下载的压缩包
-        rm "sing-box-$version_without_v-linux-amd64.tar.gz"
+      - name: Download & extract latest Sing-Box release
+        id: download-singbox
+        run: |
+          set -euo pipefail
 
-    - name: Compile rule-set
-      run: |
-        # 进入到解压后的 sing-box 文件夹
-        cd "sing-box-$version_without_v-linux-amd64"
-        
-        # 遍历 JSON 文件并编译成 .srs 格式
-        for file in $GITHUB_WORKSPACE/rule-set/*.json; do
-          if [ -f "$file" ]; then
-            # 获取文件名（不包括路径和扩展名）
-            base_name=$(basename "$file" .json)
-            # 执行编译命令
-            ./sing-box rule-set compile --output "$GITHUB_WORKSPACE/rule-set/${base_name}.srs" "$file"
+          echo "Fetching latest release tag..."
+          latest_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+          if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
+            echo "Failed to get latest release tag" >&2
+            exit 1
           fi
-        done
+          echo "Latest tag: $latest_tag"
 
-    - name: Commit and push compiled files
-      run: |
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-        git add rule-set/*.srs
-        git commit -m "Compile new or updated rule sets"
-        git push
+          # 去掉前缀 v 得到没有 v 的版本号
+          version_no_v=${latest_tag#v}
+          echo "Version without v: $version_no_v"
+
+          asset_name="sing-box-${version_no_v}-linux-amd64.tar.gz"
+          download_url="https://github.com/SagerNet/sing-box/releases/download/${latest_tag}/${asset_name}"
+          echo "Download URL: $download_url"
+
+          # 下载
+          wget -q --show-progress "$download_url" -O "$asset_name"
+
+          # 解压
+          tar -zxvf "$asset_name"
+
+          # 找到解压出的目录（匹配 sing-box-*-linux-amd64）
+          extracted_dir=$(ls -d sing-box-*-linux-amd64 2>/dev/null | head -n1 || true)
+          if [ -z "$extracted_dir" ]; then
+            echo "Cannot find extracted directory after tar." >&2
+            ls -al
+            exit 1
+          fi
+          echo "Extracted directory: $extracted_dir"
+
+          # 如果已有旧的 sing-box 目录，先移除（谨慎）
+          if [ -d "sing-box" ]; then
+            rm -rf sing-box
+          fi
+
+          # 重命名为统一目录 sing-box
+          mv "$extracted_dir" sing-box
+
+          # 确保二进制可执行
+          chmod +x sing-box/sing-box
+
+          # 清理压缩包
+          rm -f "$asset_name"
+
+          # 导出 step outputs，供后续步骤使用（可选）
+          echo "latest_tag=${latest_tag}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${version_no_v}" >> $GITHUB_OUTPUT
+
+      - name: Compile rule-set JSON -> .srs
+        id: compile
+        run: |
+          set -euo pipefail
+
+          # 进入 sing-box 目录（我们在上一步已经把解压目录重命名为 sing-box）
+          cd sing-box
+
+          # 检查 sing-box 可执行文件
+          if [ ! -x ./sing-box ]; then
+            echo "sing-box binary not found or not executable at $(pwd)/sing-box" >&2
+            ls -al
+            exit 1
+          fi
+
+          # 遍历仓库中的 rule-set/*.json 文件并编译为对应的 .srs
+          compiled=0
+          for file in "$GITHUB_WORKSPACE"/rule-set/*.json; do
+            [ -e "$file" ] || continue
+            base_name=$(basename "$file" .json)
+            out="$GITHUB_WORKSPACE/rule-set/${base_name}.srs"
+            echo "Compiling $file -> $out"
+            ./sing-box rule-set compile --output "$out" "$file"
+            compiled=1
+          done
+
+          if [ "$compiled" -eq 0 ]; then
+            echo "No JSON files found in rule-set/ to compile."
+          fi
+
+      - name: Commit and push compiled .srs (if changed)
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          cd "$GITHUB_WORKSPACE"
+          git add rule-set/*.srs || true
+
+          # 仅当有改动时提交
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: compile rule-set -> .srs (by GitHub Actions)"
+            git push
+          fi
