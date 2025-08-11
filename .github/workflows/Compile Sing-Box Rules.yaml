@@ -24,7 +24,7 @@ jobs:
         latest_version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
         echo "Latest Sing-Box version: $latest_version"
         
-        # 构造下载链接，版本号正确的文件名格式
+        # 修正下载链接格式，确保版本前有 "v" 前缀
         download_url="https://github.com/SagerNet/sing-box/releases/download/$latest_version/sing-box-$latest_version-linux-amd64.tar.gz"
         
         # 下载 Sing-Box 的最新发布版本
