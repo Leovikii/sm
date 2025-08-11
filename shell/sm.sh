@@ -1,7 +1,7 @@
 #!/bin/sh
 set -u
 
-DEFAULT_CONFIG_URL="http://example.com/config.json"
+DEFAULT_CONFIG_URL="https://example.com/config.json"
 SCRIPT_REMOTE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 SCRIPT_INSTALL_PATH="/usr/local/bin/sm.sh"
 SINGBOX_CONFIG_DIR_OPENWRT="/etc/sing-box"
