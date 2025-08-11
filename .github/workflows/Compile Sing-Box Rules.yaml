@@ -41,13 +41,16 @@ jobs:
 
     - name: Compile rule-set
       run: |
-        cd $GITHUB_WORKSPACE  # 返回到工作目录
-        for file in rule-set/*.json; do
+        # 进入到解压后的 sing-box 文件夹
+        cd "sing-box-$version_without_v-linux-amd64"
+        
+        # 遍历 JSON 文件并编译成 .srs 格式
+        for file in $GITHUB_WORKSPACE/rule-set/*.json; do
           if [ -f "$file" ]; then
             # 获取文件名（不包括路径和扩展名）
             base_name=$(basename "$file" .json)
             # 执行编译命令
-            ./sing-box rule-set compile --output "rule-set/${base_name}.srs" "$file"
+            ./sing-box rule-set compile --output "$GITHUB_WORKSPACE/rule-set/${base_name}.srs" "$file"
           fi
         done
 
