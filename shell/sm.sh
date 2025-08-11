@@ -119,7 +119,7 @@ detect_os() {
 
 install_deps_openwrt() {
     _log "OpenWrt：检查并安装依赖（opkg）"
-    PKGS="ca-bundle curl wget coreutils jq"
+    PKGS="ca-bundle curl jq"
     if ! opkg update >/dev/null 2>&1; then
         _log "opkg update 失败，继续检测已安装包" 
     fi
