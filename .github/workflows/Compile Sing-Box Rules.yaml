@@ -1,0 +1,54 @@
+name: Compile Sing-Box Rules
+
+on:
+  push:
+    paths:
+      - 'rule-set/**/*.json'  # 监听 rule-set 文件夹中的所有 JSON 文件的新增或修改
+
+jobs:
+  compile_rules:
+    runs-on: ubuntu-latest  # 使用最新版的 Ubuntu 运行环境
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2  # 检出代码
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget build-essential jq  # 安装 wget 和 jq
+
+    - name: Download Sing-Box latest release
+      run: |
+        # 获取 Sing-Box 最新 Release 的版本信息
+        latest_version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+        echo "Latest Sing-Box version: $latest_version"
+        
+        # 下载 Sing-Box 的最新发布版本
+        wget https://github.com/SagerNet/sing-box/releases/download/$latest_version/sing-box-linux-amd64.tar.gz
+        
+        # 解压下载的文件
+        tar -zxvf sing-box-linux-amd64.tar.gz
+        
+        # 清理已下载的压缩包
+        rm sing-box-linux-amd64.tar.gz
+
+    - name: Compile rule-set
+      run: |
+        cd $GITHUB_WORKSPACE  # 返回到工作目录
+        for file in rule-set/*.json; do
+          if [ -f "$file" ]; then
+            # 获取文件名（不包括路径和扩展名）
+            base_name=$(basename "$file" .json)
+            # 执行编译命令
+            ./sing-box rule-set compile --output "rule-set/${base_name}.srs" "$file"
+          fi
+        done
+
+    - name: Commit and push compiled files
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add rule-set/*.srs
+        git commit -m "Compile new or updated rule sets"
+        git push
