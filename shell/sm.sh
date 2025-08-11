@@ -120,16 +120,48 @@ detect_os() {
 install_deps_openwrt() {
     _log "OpenWrt：检查并安装依赖（opkg）"
     PKGS="curl jq"
-    if ! opkg update >/dev/null 2>&1; then
-        _log "opkg update 失败，继续检测已安装包"
-    fi
+
+    missing=""
     for p in $PKGS; do
-        if opkg list-installed "$p" >/dev/null 2>&1; then
-            _log "$p 已安装"
+        if command -v "$p" >/dev/null 2>&1; then
+            _log "$p 已安装 (通过可执行文件检测)"
         else
-            _log "安装 $p"
-            if ! opkg install "$p" >/dev/null 2>&1; then
-                _err "安装 $p 失败"
+            missing="$missing $p"
+        fi
+    done
+
+    # 若都已安装则返回
+    if [ -z "$(printf '%s' "$missing" | sed 's/^ *//;s/ *$//')" ]; then
+        _log "所有依赖已满足"
+        return 0
+    fi
+
+    # 确认 opkg 可用
+    if ! command -v opkg >/dev/null 2>&1; then
+        _err "opkg 未找到，无法自动安装依赖：$missing。请手动安装这些包或在设备上启用 opkg。"
+        return 1
+    fi
+
+    # 尝试更新索引（网络错误也继续尝试安装）
+    _log "执行 opkg update..."
+    if ! opkg update >/dev/null 2>&1; then
+        _err "opkg update 失败（将继续尝试安装缺失包）"
+    fi
+
+    # 安装缺失的包
+    for p in $missing; do
+        p="$(printf '%s' "$p" | sed 's/^ *//;s/ *$//')"
+        [ -z "$p" ] && continue
+        _log "尝试安装 $p"
+        if opkg install "$p" >/dev/null 2>&1; then
+            _log "$p 安装成功"
+        else
+            _err "opkg 安装 $p 失败，打印详细错误并重试一次";
+            opkg install "$p" || true
+            if command -v "$p" >/dev/null 2>&1; then
+                _log "$p 现在可用"
+            else
+                _err "$p 未能安装成功。请检查网络、软件源或在 OpenWrt 上手动安装。"
             fi
         fi
     done
