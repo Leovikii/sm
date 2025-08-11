@@ -24,17 +24,20 @@ jobs:
         latest_version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
         echo "Latest Sing-Box version: $latest_version"
         
-        # 修正下载链接格式，确保版本前有 "v" 前缀
-        download_url="https://github.com/SagerNet/sing-box/releases/download/$latest_version/sing-box-$latest_version-linux-amd64.tar.gz"
+        # 去除版本号前的 'v' 前缀（例如 'v1.12.1' -> '1.12.1'）
+        version_without_v=${latest_version#v}
+        
+        # 构造正确的下载链接
+        download_url="https://github.com/SagerNet/sing-box/releases/download/$latest_version/sing-box-$version_without_v-linux-amd64.tar.gz"
         
         # 下载 Sing-Box 的最新发布版本
         wget $download_url
         
         # 解压下载的文件
-        tar -zxvf "sing-box-$latest_version-linux-amd64.tar.gz"
+        tar -zxvf "sing-box-$version_without_v-linux-amd64.tar.gz"
         
         # 清理已下载的压缩包
-        rm "sing-box-$latest_version-linux-amd64.tar.gz"
+        rm "sing-box-$version_without_v-linux-amd64.tar.gz"
 
     - name: Compile rule-set
       run: |
