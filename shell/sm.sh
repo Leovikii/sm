@@ -2,7 +2,7 @@
 set -u
 
 DEFAULT_CONFIG_URL="https://example.com/config.json"
-SCRIPT_REMOTE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
+SCRIPT_REMOTE_URL="https://raw.githubusercontent.com/Leovikii/rule-set/main/shell/sm.sh"
 SCRIPT_INSTALL_PATH="/usr/local/bin/sm.sh"
 SINGBOX_CONFIG_DIR_OPENWRT="/etc/sing-box"
 SINGBOX_CONFIG_DIR_DEBIAN="/etc/sing-box"
@@ -119,16 +119,18 @@ detect_os() {
 
 install_deps_openwrt() {
     _log "OpenWrt：检查并安装依赖（opkg）"
-    PKGS="ca-bundle curl jq"
+    PKGS="curl jq"
     if ! opkg update >/dev/null 2>&1; then
-        _log "opkg update 失败，继续检测已安装包" 
+        _log "opkg update 失败，继续检测已安装包"
     fi
     for p in $PKGS; do
         if opkg list-installed "$p" >/dev/null 2>&1; then
             _log "$p 已安装"
         else
             _log "安装 $p"
-            opkg install "$p" || _err "安装 $p 失败"
+            if ! opkg install "$p" >/dev/null 2>&1; then
+                _err "安装 $p 失败"
+            fi
         fi
     done
 }
