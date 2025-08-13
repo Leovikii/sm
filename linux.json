@@ -1,0 +1,334 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns_direct",
+        "type": "udp",
+        "server": "119.29.29.29"
+      },
+      {
+        "tag": "dns_proxy",
+        "type": "tls",
+        "server": "8.8.8.8",
+        "detour": "MR"
+      },
+      {
+        "tag": "dns_hk",
+        "type": "tls",
+        "server": "8.8.8.8",
+        "detour": "HK"
+      },
+      {
+        "tag": "dns_jp",
+        "type": "tls",
+        "server": "8.8.8.8",
+        "detour": "JP"
+      }
+    ],
+    "rules": [
+      {
+        "clash_mode": "direct",
+        "server": "dns_direct"
+      },
+      {
+        "clash_mode": "global",
+        "server": "dns_proxy"
+      },
+      {
+        "rule_set": [
+          "rule_direct",
+          "rule_psite"
+        ],
+        "server": "dns_direct"
+      },
+      {
+        "rule_set": "rule_ad",
+        "action": "reject"
+      },
+      {
+        "rule_set": "rule_proxy",
+        "server": "dns_proxy"
+      },
+      {
+        "rule_set": "rule_18comic",
+        "server": "dns_hk"
+      },
+      {
+        "rule_set": "rule_dlsite",
+        "server": "dns_jp",
+        "strategy": "ipv4_only"
+      },
+      {
+        "rule_set": "rule_cnsite",
+        "server": "dns_direct"
+      },
+      {
+        "rule_set": "rule_xcn",
+        "server": "dns_proxy"
+      }
+    ],
+    "final": "dns_proxy",
+    "independent_cache": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "mtu": 9000,
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "auto_redirect": true,
+      "route_exclude_address_set": [
+        "rule_cnip"
+      ],
+      "platform": {
+        "http_proxy": {
+          "enabled": false,
+          "server": "127.0.0.1",
+          "server_port": 7893
+        }
+      }
+    },
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "0.0.0.0",
+      "listen_port": 7893
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "MR",
+      "outbounds": [
+        "DR"
+      ]
+    },
+    {
+      "type": "direct",
+      "tag": "DR"
+    },
+    {
+      "type": "selector",
+      "tag": "GLOBAL",
+      "outbounds": [
+        "MR",
+        "DR"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "FR",
+      "outbounds": [
+        "MR",
+        "DR"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "VLAN",
+      "outbounds": [
+        "DR"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "HK",
+      "outbounds": [
+        "MR",
+        "DR"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "JP",
+      "outbounds": [
+        "MR",
+        "DR"
+      ]
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "sniffer": [
+          "http",
+          "tls",
+          "quic",
+          "dns"
+        ]
+      },
+      {
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "port": 53
+          },
+          {
+            "protocol": "dns"
+          }
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "clash_mode": "direct",
+        "outbound": "DR"
+      },
+      {
+        "clash_mode": "global",
+        "outbound": "GLOBAL"
+      },
+      {
+        "ip_cidr": "192.168.2.0/24",
+        "outbound": "VLAN"
+      },
+      {
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "protocol": "bittorrent"
+          },
+          {
+            "rule_set": [
+              "rule_psite",
+              "rule_pip",
+              "rule_direct"
+            ]
+          },
+          {
+            "port_range": "1000:"
+          }
+        ],
+        "outbound": "DR"
+      },
+      {
+        "rule_set": "rule_ad",
+        "action": "reject",
+        "method": "default"
+      },
+      {
+        "rule_set": "rule_proxy",
+        "outbound": "MR"
+      },
+      {
+        "rule_set": "rule_18comic",
+        "outbound": "HK"
+      },
+      {
+        "rule_set": "rule_dlsite",
+        "outbound": "JP"
+      },
+      {
+        "rule_set": [
+          "rule_cnip",
+          "rule_cnsite"
+        ],
+        "outbound": "DR"
+      },
+      {
+        "rule_set": "rule_xcn",
+        "outbound": "MR"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "rule_direct",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Leovikii/sm/main/rule-set/dr.srs",
+        "download_detour": "MR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_proxy",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/Leovikii/sm/main/rule-set/py.srs",
+        "download_detour": "MR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_ad",
+        "format": "binary",
+        "url": "https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Singbox-regex.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_18comic",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/18comic.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_dlsite",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/dlsite.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_cnsite",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_cnip",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_psite",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_pip",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_xcn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs",
+        "download_detour": "DR"
+      }
+    ],
+    "final": "FR",
+    "default_domain_resolver": {
+      "server": "dns_direct"
+    },
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    },
+    "clash_api": {
+      "external_controller": "0.0.0.0:9090",
+      "external_ui": "./ui",
+      "external_ui_download_url": "https://github.com/Zephyruso/zashboard/releases/latest/download/dist-cdn-fonts.zip",
+      "external_ui_download_detour": "MR",
+      "default_mode": "rule"
+    }
+  }
+}
