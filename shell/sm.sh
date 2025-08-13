@@ -98,7 +98,6 @@ detect_os() {
             debian|ubuntu|raspbian) OS_TYPE="debian" ;;
         esac
     fi
-
     if [ "$OS_TYPE" = "unknown" ]; then
         if command -v opkg >/dev/null 2>&1; then
             OS_TYPE="openwrt"
@@ -106,26 +105,12 @@ detect_os() {
             OS_TYPE="debian"
         fi
     fi
-
-    # 检测 Windows（在 mingw/MSYS/git-bash 等环境下也可检测到 powershell）
     if [ "$OS_TYPE" = "unknown" ]; then
-        if [ -n "${WINDIR-}" ] || command -v powershell.exe >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-            OS_TYPE="windows"
-        fi
-    fi
-
-    if [ "$OS_TYPE" = "unknown" ]; then
-        printf '%s' "无法自动确定系统类型。请选择：
-1) OpenWrt
-2) Debian/Ubuntu
-3) Windows
-4) 退出
-输入选项编号: "
+        printf '%s' "无法自动确定系统类型。请选择：\n1) OpenWrt\n2) Debian/Ubuntu\n3) 退出\n输入选项编号: "
         read -r opt
         case "$opt" in
             1) OS_TYPE="openwrt" ;;
             2) OS_TYPE="debian" ;;
-            3) OS_TYPE="windows" ;;
             *) _fatal "已退出" ;;
         esac
     fi
@@ -217,15 +202,11 @@ is_singbox_installed() {
     if command -v sing-box >/dev/null 2>&1; then
         return 0
     fi
-    if command -v sing-box.exe >/dev/null 2>&1; then
-        return 0
-    fi
     if [ -x "/usr/bin/sing-box" ] || [ -x "/usr/sbin/sing-box" ] || [ -x "/bin/sing-box" ]; then
         return 0
     fi
     return 1
 }
-
 
 install_singbox_openwrt() {
     _log "使用官方安装脚本安装 sing-box(OpenWrt)"
@@ -279,25 +260,6 @@ EOF
         _err "apt 安装 sing-box 失败"
         return 1
     fi
-}
-
-install_singbox_windows() {
-    _log "Windows：通过 scoop 安装 sing-box"
-    # 选择可用的 PowerShell
-    if command -v powershell.exe >/dev/null 2>&1; then
-        PS_CMD="powershell.exe"
-    elif command -v pwsh >/dev/null 2>&1; then
-        PS_CMD="pwsh"
-    else
-        _err "未检测到 PowerShell，无法使用 scoop 安装。"
-        return 1
-    fi
-
-    # 组合 PowerShell 命令，使用 -NoProfile 和 -ExecutionPolicy RemoteSigned
-    CMD="Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; iwr -useb scoop.201704.xyz | iex; scoop bucket add spc https://gitee.com/wlzwme/scoop-proxy-cn.git; scoop update; scoop install spc/sing-box"
-
-    # 以非交互方式运行 PowerShell 命令
-    $PS_CMD -NoProfile -ExecutionPolicy RemoteSigned -Command "$CMD" || { _err "scoop 安装 sing-box 失败"; return 1; }
 }
 
 install_or_update_singbox() {
@@ -360,44 +322,6 @@ download_and_replace_config() {
     prepare_tmp
     out="$TMP_DIR/config.json"
     _log "从 $url 下载配置到 $out"
-
-    if [ "$OS_TYPE" = "windows" ]; then
-        # 在 Windows 上使用 PowerShell 直接下载并验证，然后移动到 scoop 安装目录下的 sing-box 版本文件夹
-        if command -v powershell.exe >/dev/null 2>&1; then
-            PS_CMD="powershell.exe"
-        elif command -v pwsh >/dev/null 2>&1; then
-            PS_CMD="pwsh"
-        else
-            _err "未检测到 PowerShell，无法在 Windows 上下载配置"
-            return 1
-        fi
-
-        ps1="$TMP_DIR/win_dl.ps1"
-        cat > "$ps1" <<'PS'
-param([string]$url)
-$base = Join-Path $env:USERPROFILE 'scoop\apps\sing-box'
-if (-not (Test-Path $base)) { Write-Error 'scoop sing-box 目录未找到'; exit 2 }
-$dir = Get-ChildItem -Directory $base | Sort-Object Name -Descending | Select-Object -First 1
-if ($null -eq $dir) { Write-Error '未找到 sing-box 版本目录'; exit 3 }
-$target = Join-Path $dir.FullName 'config.json'
-$tmp = "$target.tmp"
-try { Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -ErrorAction Stop } catch { Write-Error '下载失败'; exit 4 }
-try { $txt = Get-Content -Raw $tmp; $null = $txt | ConvertFrom-Json } catch { Remove-Item -Force $tmp -ErrorAction SilentlyContinue; Write-Error 'JSON 格式验证失败'; exit 5 }
-try { Move-Item -Force $tmp $target -ErrorAction Stop } catch { Write-Error '移动文件失败'; exit 6 }
-Write-Output $target
-exit 0
-PS
-        # 执行 PowerShell 脚本
-        if ! $PS_CMD -NoProfile -ExecutionPolicy Bypass -File "$ps1" "$url"; then
-            _err "Windows: 配置下载或验证失败（请检查 PowerShell 输出）"
-            return 1
-        fi
-        _log "Windows: 配置已下载并放置到 scoop 安装目录下"
-        rm -f "$ps1" 2>/dev/null || true
-        return 0
-    fi
-
-    # 非 Windows 平台使用原有流程（jq 验证）
     if ! download "$url" "$out"; then _err "下载配置失败：$url"; return 1; fi
     if ! command -v jq >/dev/null 2>&1; then
         _err "未检测到 jq，无法验证 JSON 格式。"
@@ -433,7 +357,9 @@ PS
         _err "移动/复制配置文件失败"
         return 1
     fi
-}manage_singbox_menu() {
+} 
+
+manage_singbox_menu() {
     while :; do
         _log "sing-box 管理 - 二级菜单"
         printf '1) 启动\n2) 停止\n3) 重启\n4) 强行停止\n5) 启用开机自启\n6) 禁用开机自启\n7) 查看日志（按页）\n8) 实时日志\n9) 卸载 sing-box\n0) 返回主菜单\n'
@@ -470,74 +396,7 @@ svc_action() {
             journalf) $SUDO journalctl -u sing-box --output cat -f || _err "journalctl -f 失败" ;;
             *) _err "未知操作 $action" ;;
         esac
-    elif [ "$OS_TYPE" = "windows" ]; then
-        # Windows: 使用 PowerShell 启动/停止/重启/开机自启管理
-        if command -v powershell.exe >/dev/null 2>&1; then
-            PS_CMD="powershell.exe"
-        elif command -v pwsh >/dev/null 2>&1; then
-            PS_CMD="pwsh"
-        else
-            _err "未检测到 PowerShell，无法管理 Windows 下的 sing-box"
-            return 1
-        fi
-
-        # 生成临时 PowerShell 脚本并执行
-        case "$action" in
-            start)
-                psf="$TMP_DIR/win_start.ps1"
-                cat > "$psf" <<'PS'
-$base = Join-Path $env:USERPROFILE 'scoop\apps\sing-box'
-if (-not (Test-Path $base)) { Write-Error 'scoop sing-box 目录未找到'; exit 2 }
-$dir = Get-ChildItem -Directory $base | Sort-Object Name -Descending | Select-Object -First 1
-if ($null -eq $dir) { Write-Error '未找到 sing-box 版本目录'; exit 3 }
-$exe = Join-Path $dir.FullName 'sing-box.exe'
-Start-Process -FilePath $exe -WindowStyle Hidden
-exit 0
-PS
-                $PS_CMD -NoProfile -ExecutionPolicy Bypass -File "$psf" || _err "Windows: 启动 sing-box 失败" ;;
-            stop)
-                psf="$TMP_DIR/win_stop.ps1"
-                cat > "$psf" <<'PS'
-Get-Process -Name 'sing-box' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-exit 0
-PS
-                $PS_CMD -NoProfile -ExecutionPolicy Bypass -File "$psf" || _err "Windows: 停止 sing-box 失败" ;;
-            restart)
-                svc_action stop
-                sleep 1
-                svc_action start ;;
-            enable)
-                psf="$TMP_DIR/win_enable.ps1"
-                cat > "$psf" <<'PS'
-$base = Join-Path $env:USERPROFILE 'scoop\apps\sing-box'
-$dir = Get-ChildItem -Directory $base | Sort-Object Name -Descending | Select-Object -First 1
-if ($null -eq $dir) { Write-Error '未找到 sing-box 版本目录'; exit 3 }
-$exe = Join-Path $dir.FullName 'sing-box.exe'
-$startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
-$lnk = Join-Path $startup 'sing-box.lnk'
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($lnk)
-$Shortcut.TargetPath = $exe
-$Shortcut.WorkingDirectory = Split-Path $exe
-$Shortcut.Save()
-exit 0
-PS
-                $PS_CMD -NoProfile -ExecutionPolicy Bypass -File "$psf" || _err "Windows: 设置开机自启失败" ;;
-            disable)
-                psf="$TMP_DIR/win_disable.ps1"
-                cat > "$psf" <<'PS'
-$startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
-$lnk = Join-Path $startup 'sing-box.lnk'
-if (Test-Path $lnk) { Remove-Item -Force $lnk }
-exit 0
-PS
-                $PS_CMD -NoProfile -ExecutionPolicy Bypass -File "$psf" || _err "Windows: 取消开机自启失败" ;;
-            journal|journalf)
-                _err "Windows 环境下不支持 journalctl；请查看 sing-box 的日志目录或使用 Windows 事件查看器。" ;;
-            *) _err "未知操作 $action" ;;
-        esac
     else
-        # OpenWrt 常用 /etc/init.d 管理
         if [ -x "/etc/init.d/sing-box" ]; then
             case "$action" in
                 enable) /etc/init.d/sing-box enable || _err "enable 失败" ;;
@@ -593,23 +452,6 @@ uninstall_singbox() {
                 ensure_root
                 if [ -n "$SUDO" ]; then RUNPREFIX="$SUDO"; else RUNPREFIX=""; fi
                 $RUNPREFIX apt-get remove --purge -y sing-box || _err "apt remove 失败"
-            elif [ "$OS_TYPE" = "windows" ]; then
-                if command -v powershell.exe >/dev/null 2>&1; then
-                    PS_CMD="powershell.exe"
-                elif command -v pwsh >/dev/null 2>&1; then
-                    PS_CMD="pwsh"
-                else
-                    _err "未检测到 PowerShell，无法在 Windows 上卸载 sing-box"
-                    return 1
-                fi
-                psf="$TMP_DIR/win_uninst.ps1"
-                cat > "$psf" <<'PS'
-try { scoop uninstall spc/sing-box } catch { }
-try { scoop uninstall sing-box } catch { }
-exit 0
-PS
-                $PS_CMD -NoProfile -ExecutionPolicy Bypass -File "$psf" || _err "Windows: 使用 scoop 卸载 sing-box 失败"
-                rm -f "$psf" 2>/dev/null || true
             else
                 if [ -x "/etc/init.d/sing-box" ]; then
                     /etc/init.d/sing-box stop || true
