@@ -51,11 +51,13 @@
       },
       {
         "rule_set": "rule_proxy",
-        "server": "dns_proxy"
+        "server": "dns_proxy",
+        "strategy": "ipv4_only"
       },
       {
         "rule_set": "rule_18comic",
-        "server": "dns_hk"
+        "server": "dns_hk",
+        "strategy": "ipv4_only"
       },
       {
         "rule_set": "rule_dlsite",
@@ -68,7 +70,8 @@
       },
       {
         "rule_set": "rule_xcn",
-        "server": "dns_proxy"
+        "server": "dns_proxy",
+        "strategy": "ipv4_only"
       }
     ],
     "final": "dns_proxy",
