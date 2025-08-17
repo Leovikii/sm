@@ -12,19 +12,19 @@
       },
       {
         "tag": "dns_proxy",
-        "type": "tls",
+        "type": "https",
         "server": "8.8.8.8",
         "detour": "MR"
       },
       {
         "tag": "dns_hk",
-        "type": "tls",
+        "type": "https",
         "server": "8.8.8.8",
         "detour": "HK"
       },
       {
         "tag": "dns_jp",
-        "type": "tls",
+        "type": "https",
         "server": "8.8.8.8",
         "detour": "JP"
       }
