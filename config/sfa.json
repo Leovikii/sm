@@ -106,14 +106,14 @@
   ],
   "outbounds": [
     {
+      "type": "direct",
+      "tag": "DR"
+    },
+    {
       "type": "selector",
       "tag": "MR",
       "outbounds": [
       ]
-    },
-    {
-      "type": "direct",
-      "tag": "DR"
     },
     {
       "type": "selector",
