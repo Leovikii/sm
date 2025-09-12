@@ -204,9 +204,6 @@
               "rule_pip",
               "rule_direct"
             ]
-          },
-          {
-            "port_range": "1000:"
           }
         ],
         "outbound": "DR"
