@@ -52,12 +52,12 @@
         "server": "dns_direct"
       },
       {
-        "rule_set": "rule_ad",
-        "action": "reject"
-      },
-      {
         "rule_set": "rule_proxy",
         "server": "dns_proxy"
+      },
+      {
+        "rule_set": "rule_ad",
+        "action": "reject"
       },
       {
         "rule_set": "rule_18comic",
@@ -92,9 +92,6 @@
       "auto_route": true,
       "strict_route": true,
       "auto_redirect": false,
-      "route_exclude_address_set": [
-        "rule_cnip"
-      ],
       "platform": {
         "http_proxy": {
           "enabled": true,
@@ -118,8 +115,7 @@
     {
       "type": "selector",
       "tag": "MR",
-      "outbounds": [
-      ]
+      "outbounds": []
     },
     {
       "type": "selector",
@@ -215,13 +211,12 @@
         "outbound": "DR"
       },
       {
-        "rule_set": "rule_ad",
-        "action": "reject",
-        "method": "default"
-      },
-      {
         "rule_set": "rule_proxy",
         "outbound": "MR"
+      },
+      {
+        "rule_set": "rule_ad",
+        "action": "reject"
       },
       {
         "rule_set": "rule_18comic",
