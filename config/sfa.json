@@ -142,7 +142,8 @@
       "tag": "JP",
       "outbounds": [
         "MR",
-        "DR"
+        "DR",
+        "CH_JP"
       ]
     }
   ],
