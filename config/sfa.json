@@ -23,12 +23,6 @@
         "detour": "MR"
       },
       {
-        "tag": "dns_hk",
-        "type": "https",
-        "server": "8.8.8.8",
-        "detour": "HK"
-      },
-      {
         "tag": "dns_jp",
         "type": "https",
         "server": "8.8.8.8",
@@ -60,13 +54,8 @@
         "action": "reject"
       },
       {
-        "rule_set": "rule_18comic",
-        "server": "dns_hk"
-      },
-      {
         "rule_set": "rule_dlsite",
-        "server": "dns_jp",
-        "strategy": "ipv4_only"
+        "server": "dns_jp"
       },
       {
         "rule_set": "rule_cnsite",
@@ -143,9 +132,8 @@
     },
     {
       "type": "selector",
-      "tag": "HK",
+      "tag": "RR",
       "outbounds": [
-        "MR",
         "DR"
       ]
     },
@@ -220,10 +208,6 @@
         "action": "reject"
       },
       {
-        "rule_set": "rule_18comic",
-        "outbound": "HK"
-      },
-      {
         "rule_set": "rule_dlsite",
         "outbound": "JP"
       },
@@ -259,13 +243,6 @@
         "tag": "rule_ad",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "rule_18comic",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/18comic.srs",
         "download_detour": "DR"
       },
       {
