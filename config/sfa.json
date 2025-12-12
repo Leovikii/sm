@@ -6,26 +6,33 @@
   "dns": {
     "servers": [
       {
-        "tag": "dns_local",
+        "tag": "dns_local_resolver",
         "type": "udp",
-        "server": "119.29.29.29"
+        "server": "223.5.5.5"
+      },
+      {
+        "tag": "dns_proxy_resolver",
+        "type": "udp",
+        "server": "1.1.1.1"
       },
       {
         "tag": "dns_direct",
-        "type": "https",
-        "server": "doh.pub",
-        "domain_resolver": "dns_local"
+        "type": "h3",
+        "server": "dns.alidns.com",
+        "domain_resolver": "dns_local_resolver"
       },
       {
         "tag": "dns_proxy",
         "type": "https",
-        "server": "8.8.8.8",
+        "server": "dns.cloudflare.com",
+        "domain_resolver": "dns_proxy_resolver",
         "detour": "MR"
       },
       {
         "tag": "dns_jp",
         "type": "https",
-        "server": "8.8.8.8",
+        "server": "dns.cloudflare.com",
+        "domain_resolver": "dns_proxy_resolver",
         "detour": "JP"
       }
     ],
