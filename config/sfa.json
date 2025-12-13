@@ -61,7 +61,10 @@
         "action": "reject"
       },
       {
-        "rule_set": "rule_dlsite",
+        "rule_set": [
+          "rule_dlsite",
+          "rule_dmm"
+        ],
         "server": "dns_jp"
       },
       {
@@ -215,7 +218,10 @@
         "action": "reject"
       },
       {
-        "rule_set": "rule_dlsite",
+        "rule_set": [
+          "rule_dlsite",
+          "rule_dmm"
+        ],
         "outbound": "JP"
       },
       {
@@ -257,6 +263,13 @@
         "tag": "rule_dlsite",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/dlsite.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "rule_dmm",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/dmm.srs",
         "download_detour": "DR"
       },
       {
