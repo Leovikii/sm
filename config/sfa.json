@@ -17,7 +17,7 @@
       },
       {
         "tag": "dns_direct",
-        "type": "h3",
+        "type": "quic",
         "server": "dns.alidns.com",
         "domain_resolver": "dns_local_resolver"
       },
