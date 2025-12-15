@@ -11,11 +11,6 @@
         "server": "223.5.5.5"
       },
       {
-        "tag": "dns_proxy_resolver",
-        "type": "udp",
-        "server": "1.1.1.1"
-      },
-      {
         "tag": "dns_direct",
         "type": "quic",
         "server": "dns.alidns.com",
@@ -23,16 +18,14 @@
       },
       {
         "tag": "dns_proxy",
-        "type": "https",
-        "server": "dns.cloudflare.com",
-        "domain_resolver": "dns_proxy_resolver",
+        "type": "h3",
+        "server": "1.1.1.1",
         "detour": "MR"
       },
       {
         "tag": "dns_jp",
-        "type": "https",
-        "server": "dns.cloudflare.com",
-        "domain_resolver": "dns_proxy_resolver",
+        "type": "h3",
+        "server": "1.1.1.1",
         "detour": "JP"
       }
     ],
