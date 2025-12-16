@@ -24,7 +24,7 @@
       },
       {
         "tag": "dns_proxy",
-        "type": "h3",
+        "type": "https",
         "server": "dns.cloudflare.com",
         "domain_resolver": "dns_proxy_resolver",
         "detour": "MR"
@@ -37,7 +37,7 @@
       },
       {
         "tag": "dns_jp",
-        "type": "h3",
+        "type": "https",
         "server": "dns.cloudflare.com",
         "domain_resolver": "dns_jp_resolver",
         "detour": "JP"
