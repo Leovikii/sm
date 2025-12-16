@@ -6,7 +6,7 @@
   "dns": {
     "servers": [
       {
-        "tag": "dns_local_resolver",
+        "tag": "dns_direct_resolver",
         "type": "udp",
         "server": "223.5.5.5"
       },
@@ -14,18 +14,32 @@
         "tag": "dns_direct",
         "type": "quic",
         "server": "dns.alidns.com",
-        "domain_resolver": "dns_local_resolver"
+        "domain_resolver": "dns_direct_resolver"
       },
       {
-        "tag": "dns_proxy",
-        "type": "h3",
+        "tag": "dns_proxy_resolver",
+        "type": "udp",
         "server": "1.1.1.1",
         "detour": "MR"
       },
       {
+        "tag": "dns_proxy",
+        "type": "h3",
+        "server": "dns.cloudflare.com",
+        "domain_resolver": "dns_proxy_resolver",
+        "detour": "MR"
+      },
+      {
+        "tag": "dns_jp_resolver",
+        "type": "udp",
+        "server": "1.1.1.1",
+        "detour": "JP"
+      },
+      {
         "tag": "dns_jp",
         "type": "h3",
-        "server": "1.1.1.1",
+        "server": "dns.cloudflare.com",
+        "domain_resolver": "dns_jp_resolver",
         "detour": "JP"
       }
     ],
@@ -39,19 +53,12 @@
         "server": "dns_proxy"
       },
       {
-        "rule_set": [
-          "rule_direct",
-          "rule_psite"
-        ],
-        "server": "dns_direct"
-      },
-      {
-        "rule_set": "rule_proxy",
-        "server": "dns_proxy"
-      },
-      {
-        "rule_set": "rule_ad",
+        "query_type": "HTTPS",
         "action": "reject"
+      },
+      {
+        "rule_set": "rule_direct",
+        "server": "dns_direct"
       },
       {
         "rule_set": [
@@ -61,12 +68,15 @@
         "server": "dns_jp"
       },
       {
-        "rule_set": "rule_cnsite",
-        "server": "dns_direct"
+        "rule_set": "rule_proxy",
+        "server": "dns_proxy"
       },
       {
-        "rule_set": "rule_xcn",
-        "server": "dns_proxy"
+        "rule_set": [
+          "rule_cnsite",
+          "rule_samsung"
+        ],
+        "server": "dns_direct"
       }
     ],
     "final": "dns_proxy",
@@ -190,25 +200,16 @@
         "mode": "or",
         "rules": [
           {
+            "ip_is_private": true
+          },
+          {
             "protocol": "bittorrent"
           },
           {
-            "rule_set": [
-              "rule_psite",
-              "rule_pip",
-              "rule_direct"
-            ]
+            "rule_set": "rule_direct"
           }
         ],
         "outbound": "DR"
-      },
-      {
-        "rule_set": "rule_proxy",
-        "outbound": "MR"
-      },
-      {
-        "rule_set": "rule_ad",
-        "action": "reject"
       },
       {
         "rule_set": [
@@ -218,15 +219,16 @@
         "outbound": "JP"
       },
       {
-        "rule_set": [
-          "rule_cnip",
-          "rule_cnsite"
-        ],
-        "outbound": "DR"
+        "rule_set": "rule_proxy",
+        "outbound": "MR"
       },
       {
-        "rule_set": "rule_xcn",
-        "outbound": "MR"
+        "rule_set": [
+          "rule_cnip",
+          "rule_cnsite",
+          "rule_samsung"
+        ],
+        "outbound": "DR"
       }
     ],
     "rule_set": [
@@ -246,13 +248,6 @@
       },
       {
         "type": "remote",
-        "tag": "rule_ad",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
         "tag": "rule_dlsite",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/dlsite.srs",
@@ -267,6 +262,13 @@
       },
       {
         "type": "remote",
+        "tag": "rule_samsung",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/samsung.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
         "tag": "rule_cnsite",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
@@ -277,27 +279,6 @@
         "tag": "rule_cnip",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "rule_psite",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "rule_pip",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "rule_xcn",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs",
         "download_detour": "DR"
       }
     ],
@@ -314,7 +295,7 @@
     "clash_api": {
       "external_controller": "0.0.0.0:9090",
       "external_ui": "./ui",
-      "external_ui_download_url": "https://github.com/Zephyruso/zashboard/releases/latest/download/dist-cdn-fonts.zip",
+      "external_ui_download_url": "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip",
       "external_ui_download_detour": "MR",
       "default_mode": "rule"
     }
