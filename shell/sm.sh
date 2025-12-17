@@ -171,10 +171,86 @@ install_deps() {
     esac
 }
 
+# ==================== Bash 安装 ====================
+install_bash_if_needed() {
+    command -v bash >/dev/null 2>&1 && return 0
+    
+    _warn "未检测到 bash，某些脚本需要 bash 环境"
+    printf '%s' "是否现在安装 bash？(y/N): "
+    read -r ans
+    case "$ans" in
+        [yY]*)
+            ensure_root
+            RUNPREFIX="${SUDO:-}"
+            if [ "$OS_TYPE" = "debian" ]; then
+                _log "安装 bash（Debian）..."
+                $RUNPREFIX apt-get update >/dev/null 2>&1
+                $RUNPREFIX apt-get install -y bash || { _err "安装 bash 失败"; return 1; }
+            elif [ "$OS_TYPE" = "openwrt" ]; then
+                _log "安装 bash（OpenWrt）..."
+                opkg update >/dev/null 2>&1
+                opkg install bash || { _err "安装 bash 失败"; return 1; }
+            else
+                _err "未知系统类型，无法自动安装 bash"
+                return 1
+            fi
+            _log "bash 安装成功"
+            return 0
+            ;;
+        *)
+            _log "已取消安装 bash"
+            return 1
+            ;;
+    esac
+}
+
 # ==================== Sing-box 管理 ====================
 is_singbox_installed() {
     command -v sing-box >/dev/null 2>&1 && return 0
     [ -x "/usr/bin/sing-box" ] || [ -x "/usr/sbin/sing-box" ] || [ -x "/bin/sing-box" ]
+}
+
+get_singbox_version() {
+    if is_singbox_installed; then
+        version=$(sing-box version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+        printf '%s' "$version"
+    else
+        printf '%s' "未安装"
+    fi
+}
+
+get_singbox_status() {
+    if ! is_singbox_installed; then
+        printf '\033[90m%s\033[0m' "● 未安装"
+        return
+    fi
+    
+    if [ "$OS_TYPE" = "debian" ]; then
+        if command -v systemctl >/dev/null 2>&1; then
+            if systemctl is-active sing-box >/dev/null 2>&1; then
+                printf '\033[32m%s\033[0m' "● 运行中"
+            else
+                printf '\033[31m%s\033[0m' "● 已停止"
+            fi
+        else
+            printf '\033[90m%s\033[0m' "● 状态未知"
+        fi
+    else
+        # OpenWrt
+        if [ -x "/etc/init.d/sing-box" ]; then
+            if /etc/init.d/sing-box status 2>/dev/null | grep -q "running\|active"; then
+                printf '\033[32m%s\033[0m' "● 运行中"
+            elif ps w | grep -v grep | grep -q sing-box; then
+                printf '\033[32m%s\033[0m' "● 运行中"
+            else
+                printf '\033[31m%s\033[0m' "● 已停止"
+            fi
+        elif ps w | grep -v grep | grep -q sing-box; then
+            printf '\033[32m%s\033[0m' "● 运行中"
+        else
+            printf '\033[31m%s\033[0m' "● 已停止"
+        fi
+    fi
 }
 
 install_singbox_openwrt() {
@@ -531,39 +607,35 @@ MENU
     done
 }
 
-# ==================== TCP 优化脚本 ====================
-install_bash_if_needed() {
-    command -v bash >/dev/null 2>&1 && return 0
+# ==================== UFW 防火墙脚本 ====================
+download_and_run_ufw() {
+    _log "下载 UFW 防火墙管理脚本..."
+    prepare_tmp
+    out="$TMP_DIR/ufw.sh"
     
-    _warn "未检测到 bash，TCP 优化脚本需要 bash 环境"
-    printf '%s' "是否现在安装 bash？(y/N): "
-    read -r ans
-    case "$ans" in
-        [yY]*)
-            ensure_root
-            RUNPREFIX="${SUDO:-}"
-            if [ "$OS_TYPE" = "debian" ]; then
-                _log "安装 bash（Debian）..."
-                $RUNPREFIX apt-get update >/dev/null 2>&1
-                $RUNPREFIX apt-get install -y bash || { _err "安装 bash 失败"; return 1; }
-            elif [ "$OS_TYPE" = "openwrt" ]; then
-                _log "安装 bash（OpenWrt）..."
-                opkg update >/dev/null 2>&1
-                opkg install bash || { _err "安装 bash 失败"; return 1; }
-            else
-                _err "未知系统类型，无法自动安装 bash"
-                return 1
-            fi
-            _log "bash 安装成功"
-            return 0
-            ;;
-        *)
-            _log "取消安装，将尝试使用 sh 运行（可能失败）"
+    UFW_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/ufw.sh"
+    
+    if ! download "$UFW_URL" "$out"; then
+        _err "下载 UFW 脚本失败"
+        return 1
+    fi
+    
+    chmod +x "$out" || { _err "添加执行权限失败"; return 1; }
+    
+    # 检查并安装 bash（如果需要）
+    if ! command -v bash >/dev/null 2>&1; then
+        _warn "UFW 脚本需要 bash 环境"
+        if ! install_bash_if_needed; then
+            _err "无法运行 UFW 脚本：缺少 bash"
             return 1
-            ;;
-    esac
+        fi
+    fi
+    
+    _log "UFW 脚本下载成功，开始运行..."
+    bash "$out"
 }
 
+# ==================== TCP 优化脚本 ====================
 download_tcpx() {
     _log "下载 TCP 优化脚本..."
     prepare_tmp
@@ -714,23 +786,31 @@ main_menu() {
         hostname="$(uname -n 2>/dev/null || echo "unknown")"
         uptime_info="$(uptime 2>/dev/null | sed 's/.*up *//' | sed 's/,.*//' || echo "unknown")"
         
+        # 获取 sing-box 信息
+        singbox_version="$(get_singbox_version)"
+        singbox_status="$(get_singbox_status)"
+        
         cat <<HEADER
-╔════════════════════════════════════════╗
-║      Sing-box Manager v2.0             ║
-╠════════════════════════════════════════╣
+╔═══════════════════════════════════════╗
+║      Sing-box Manager v2.0            ║
+╠═══════════════════════════════════════╣
 ║ 主机名: ${hostname}
 ║ 系统: ${OS_VERSION}
 ║ 运行时间: ${uptime_info}
-╚════════════════════════════════════════╝
+╠═══════════════════════════════════════╣
+║ Sing-box 版本: ${singbox_version}
+║ 运行状态: ${singbox_status}
+╚═══════════════════════════════════════╝
 HEADER
         
         cat <<MENU
 
-  1) 安装或更新 sing-box
-  2) 更新配置文件
-  3) sing-box 服务管理
-  4) 下载 TCP 优化脚本
-  5) 脚本管理
+  1) 下载 UFW 管理脚本（建议）
+  2) 安装或更新 sing-box
+  3) 更新配置文件
+  4) sing-box 服务管理
+  5) 下载 TCP 优化脚本
+  6) 脚本管理
   0) 退出
 
 ────────────────────────────────────────
@@ -738,13 +818,22 @@ MENU
         printf '%s' "请选择操作: "
         read -r opt
         case "$opt" in
-            1) install_or_update_singbox ;;
-            2) config_update_menu ;;
-            3) manage_singbox_menu ;;
-            4) download_tcpx ;;
-            5) script_management_menu ;;
+            1) 
+                _log "提示：安装 UFW 防火墙可以有效保障服务器安全"
+                printf '%s' "是否继续下载并运行 UFW 管理脚本？(y/N): "
+                read -r ans
+                case "$ans" in
+                    [yY]*) download_and_run_ufw ;;
+                    *) _log "已取消" ;;
+                esac
+                ;;
+            2) install_or_update_singbox ;;
+            3) config_update_menu ;;
+            4) manage_singbox_menu ;;
+            5) download_tcpx ;;
+            6) script_management_menu ;;
             0) _log "退出"; break ;;
-            *) _err "无效选项，请输入 0-5 之间的数字" ;;
+            *) _err "无效选项，请输入 0-6 之间的数字" ;;
         esac
         [ "$opt" != "0" ] && { printf '%s' "按回车返回菜单..."; read -r _; }
     done
