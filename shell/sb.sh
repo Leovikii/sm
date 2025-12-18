@@ -6,7 +6,6 @@ DEFAULT_CONF_URL=""
 # ==================== 全局变量 ====================
 SCRIPT_NAME="sb.sh"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
-# 脚本更新地址
 SCRIPT_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh"
 
 BIN_PATH="/usr/local/bin/sing-box"
@@ -17,7 +16,7 @@ SERVICE_FILE="/etc/systemd/system/sing-box.service"
 REPO="SagerNet/sing-box"
 TMP_DIR="/tmp/sb_tmp_$$"
 
-# 镜像池
+# 镜像池 (用于 Sing-box 二进制和脚本自身的加速，不用于配置文件)
 MIRRORS=(
     "https://ghproxy.net/"
     "https://mirror.ghproxy.com/"
@@ -85,9 +84,9 @@ get_sys_arch() {
     esac
 }
 
-# ==================== 核心功能模块 ====================
+# ==================== 核心下载模块 ====================
 
-# 鲁棒下载函数
+# 鲁棒下载函数 (用于二进制文件和脚本更新，带镜像轮询)
 download_file_robust() {
     local raw_url="$1"
     local save_path="$2"
@@ -106,21 +105,10 @@ download_file_robust() {
         fi
 
         if [[ -s "$save_path" ]]; then
-            # 文件校验
             if [[ "$save_path" == *".tar.gz" ]]; then
-                if file -b "$save_path" | grep -q "gzip compressed data"; then
-                    success=true; break
-                else
-                    _warn "非 gzip 格式，尝试下一个..."
-                fi
-            elif [[ "$save_path" == *".json" ]]; then
-                 if grep -q "{" "$save_path"; then success=true; break; fi
-                 _warn "非 JSON 格式，尝试下一个..."
+                if file -b "$save_path" | grep -q "gzip compressed data"; then success=true; break; fi
             elif [[ "$save_path" == *".sh" ]]; then
-                 if grep -qE "^#!" "$save_path" || grep -q "bash" "$save_path"; then 
-                    success=true; break
-                 fi
-                 _warn "非脚本文件，尝试下一个..."
+                 if grep -qE "^#!" "$save_path" || grep -q "bash" "$save_path"; then success=true; break; fi
             else
                 success=true; break
             fi
@@ -140,7 +128,6 @@ get_latest_tag() {
     return 1
 }
 
-# 获取本地已安装版本
 get_installed_ver() {
     if [[ -f "$BIN_PATH" ]]; then
         $BIN_PATH version 2>/dev/null | head -n 1 | awk '{print $3}'
@@ -149,23 +136,22 @@ get_installed_ver() {
     fi
 }
 
-# 安装逻辑主函数
+# ==================== 安装与更新配置 ====================
+
 download_and_install() {
     check_deps
     
-    # === [新增功能 1] 检测本地文件 ===
+    # 1. 本地文件检测
     if [[ -f "./sing-box" ]]; then
         echo -e "${YELLOW}检测到当前目录下存在 sing-box 二进制文件。${PLAIN}"
         read -p "是否直接安装此本地文件? [Y/n] " install_local
         if [[ "$install_local" != "n" && "$install_local" != "N" ]]; then
             chmod +x "./sing-box"
-            # 简单验证文件是否可执行
             if ./sing-box version >/dev/null 2>&1; then
                 _log "本地文件校验通过，正在安装..."
                 systemctl stop sing-box 2>/dev/null
                 cp -f "./sing-box" "$BIN_PATH"
                 chmod +x "$BIN_PATH"
-                
                 local v=$($BIN_PATH version 2>/dev/null | head -n 1 | awk '{print $3}')
                 _log "安装完成！当前版本: ${GREEN}${v}${PLAIN}"
                 setup_service
@@ -176,13 +162,11 @@ download_and_install() {
         fi
     fi
 
-    # === [新增功能 2] 检测已安装版本并提示升级 ===
+    # 2. 版本检测
     local current_ver=$(get_installed_ver)
-    
     _log "正在查找最新版本信息..."
     local tag_version=$(get_latest_tag)
     
-    # 兜底
     if [[ -z "$tag_version" ]]; then
         _warn "自动检测版本失败，默认目标版本: v1.12.13"
         tag_version="v1.12.13"
@@ -190,17 +174,13 @@ download_and_install() {
 
     if [[ -n "$current_ver" ]]; then
         echo -e "------------------------------------"
-        echo -e "当前已安装版本: ${RED}${current_ver}${PLAIN}"
-        echo -e "检测到最新版本: ${GREEN}${tag_version}${PLAIN}"
+        echo -e "当前版本: ${RED}${current_ver}${PLAIN}"
+        echo -e "最新版本: ${GREEN}${tag_version}${PLAIN}"
         echo -e "------------------------------------"
         read -p "是否进行更新/重装? [Y/n] " update_confirm
-        if [[ "$update_confirm" == "n" || "$update_confirm" == "N" ]]; then
-            _log "已取消更新。"
-            return
-        fi
+        if [[ "$update_confirm" == "n" || "$update_confirm" == "N" ]]; then return; fi
     fi
 
-    # === 开始下载流程 ===
     mkdir -p "$TMP_DIR"
     local arch=$(get_sys_arch)
     [[ "$arch" == "unknown" ]] && _fatal "不支持的架构: $(uname -m)"
@@ -264,6 +244,7 @@ EOF
     mkdir -p "$CONF_DIR"
 }
 
+# [优化] 配置文件更新逻辑
 update_config() {
     check_deps
     mkdir -p "$TMP_DIR"
@@ -279,26 +260,56 @@ update_config() {
     if [[ -z "$url" ]]; then read -p "请输入配置 URL: " url; fi
     [[ -z "$url" ]] && return
 
-    local target_url="$url"
-    if [[ "$url" == *"github.com"* ]]; then
-        for m in "${MIRRORS[@]}"; do [[ -n "$m" ]] && target_url="${target_url#$m}"; done
+    # 1. 链接格式合法性校验
+    if [[ ! "$url" =~ ^https?:// ]]; then
+        _err "无效的链接地址！请确保以 http:// 或 https:// 开头。"
+        return
     fi
 
     local tmp_conf="$TMP_DIR/config.json"
-    if ! download_file_robust "$target_url" "$tmp_conf"; then
-        curl -k -L -o "$tmp_conf" "$url" || { _err "下载失败"; return; }
+    
+    # 2. 直接下载 (不使用镜像，带重试机制)
+    _log "正在下载配置文件 (超时15s，重试3次)..."
+    if command -v curl &>/dev/null; then
+        curl -L --retry 3 --retry-delay 2 --connect-timeout 15 -o "$tmp_conf" "$url"
+    else
+        wget -t 3 -T 15 -O "$tmp_conf" "$url"
     fi
 
+    # 3. 文件存在性检查
+    if [[ ! -s "$tmp_conf" ]]; then
+        _err "下载失败或文件为空，请检查网络连通性或链接是否正确。"
+        rm -f "$tmp_conf"
+        return
+    fi
+
+    # 4. JSON 格式严格校验
+    _log "正在校验 JSON 格式..."
     if command -v jq &>/dev/null; then
         if ! jq -e . "$tmp_conf" >/dev/null 2>&1; then
-            _err "JSON 格式无效，取消更新"; return
+            echo -e "------------------------------------------------"
+            _err "下载的文件不是合法的 JSON 格式！"
+            echo -e "${YELLOW}文件前 5 行内容预览：${PLAIN}"
+            head -n 5 "$tmp_conf"
+            echo -e "------------------------------------------------"
+            _err "已取消更新，原配置未受影响。"
+            rm -f "$tmp_conf"
+            return
+        fi
+    else
+        # 降级检查：如果没jq (虽然check_deps会装)，至少检查是否包含花括号
+        if ! grep -q "{" "$tmp_conf"; then
+            _err "文件内容校验失败，看起来不像 JSON。"
+            rm -f "$tmp_conf"
+            return
         fi
     fi
 
     mv "$tmp_conf" "$CONF_FILE"
     rm -f "$tmp_conf"
-    _log "配置已更新"
+    _log "配置文件已更新成功。"
 
+    # 记忆配置
     if [[ "$url" != "$DEFAULT_CONF_URL" ]]; then
         read -p "保存为默认地址? [Y/n] " save
         if [[ "$save" != "n" ]]; then
@@ -423,7 +434,7 @@ show_menu() {
         clear
         echo -e "
 ${BLUE}┌──────────────────────────────────────────────┐${PLAIN}
-${BLUE}│${PLAIN}           ${GREEN}Sing-box 管理面板 v8.0${PLAIN}             ${BLUE}│${PLAIN}
+${BLUE}│${PLAIN}           ${GREEN}Sing-box 管理面板 v9.0${PLAIN}             ${BLUE}│${PLAIN}
 ${BLUE}├──────────────────────────────────────────────┤${PLAIN}
 ${BLUE}│${PLAIN} 架构: ${arch}
 ${BLUE}│${PLAIN} 版本: ${GREEN}${ver}${PLAIN}
