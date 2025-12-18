@@ -96,10 +96,25 @@ install_ufw() {
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}✓ UFW安装成功${NC}"
             echo ""
-            echo -e "${YELLOW}⚠ 自动放行SSH端口(22)以防止连接中断${NC}"
+            echo -e "${YELLOW}⚠ 自动放行常用端口以防止服务中断（IPv4/IPv6双栈）${NC}"
+            
+            # 放行SSH端口 (22)
             ufw allow 22/tcp comment 'SSH TCP'
             ufw allow 22/udp comment 'SSH UDP'
-            echo -e "${GREEN}✓ 已自动放行 22/tcp 和 22/udp 端口${NC}"
+            echo -e "${GREEN}✓ 已放行 22/tcp 和 22/udp (SSH)${NC}"
+            
+            # 放行HTTP端口 (80)
+            ufw allow 80/tcp comment 'HTTP TCP'
+            ufw allow 80/udp comment 'HTTP UDP'
+            echo -e "${GREEN}✓ 已放行 80/tcp 和 80/udp (HTTP)${NC}"
+            
+            # 放行HTTPS端口 (443)
+            ufw allow 443/tcp comment 'HTTPS TCP'
+            ufw allow 443/udp comment 'HTTPS UDP'
+            echo -e "${GREEN}✓ 已放行 443/tcp 和 443/udp (HTTPS)${NC}"
+            
+            echo -e "${BLUE}注: UFW默认为每个规则创建IPv4和IPv6双栈规则${NC}"
+            
             echo ""
             echo -e "${BLUE}正在启用UFW...${NC}"
             echo "y" | ufw enable
@@ -264,6 +279,7 @@ add_rule() {
     echo -e "${GREEN}添加UFW规则${NC}"
     echo ""
     echo -e "${YELLOW}示例: 2222/tcp 或 8080/udp${NC}"
+    echo -e "${BLUE}注: 规则会自动应用于IPv4和IPv6双栈${NC}"
     echo ""
     read -p "请输入端口/协议 (如 2222/tcp): " input
     
@@ -277,7 +293,7 @@ add_rule() {
     protocol="${BASH_REMATCH[2]}"
     
     echo ""
-    echo -e "${BLUE}准备添加规则: ${port}/${protocol}${NC}"
+    echo -e "${BLUE}准备添加规则: ${port}/${protocol} (IPv4/IPv6双栈)${NC}"
     
     # 询问是否同时添加另一个协议
     if [ "$protocol" == "tcp" ]; then
@@ -288,11 +304,11 @@ add_rule() {
     
     read -p "是否同时放行 ${port}/${other_protocol}? (y/n): " add_both
     
-    # 添加规则
+    # 添加规则（UFW会自动创建IPv4和IPv6规则）
     ufw allow ${port}/${protocol} comment "Port ${port}/${protocol}"
     
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓ 已添加规则: ${port}/${protocol}${NC}"
+        echo -e "${GREEN}✓ 已添加规则: ${port}/${protocol} (包含IPv4和IPv6)${NC}"
     else
         echo -e "${RED}✗ 添加规则失败${NC}"
     fi
@@ -301,7 +317,7 @@ add_rule() {
         ufw allow ${port}/${other_protocol} comment "Port ${port}/${other_protocol}"
         
         if [ $? -eq 0 ]; then
-            echo -e "${GREEN}✓ 已添加规则: ${port}/${other_protocol}${NC}"
+            echo -e "${GREEN}✓ 已添加规则: ${port}/${other_protocol} (包含IPv4和IPv6)${NC}"
         else
             echo -e "${RED}✗ 添加规则失败${NC}"
         fi
@@ -324,16 +340,19 @@ delete_rule() {
     echo -e "${GREEN}删除UFW规则${NC}"
     echo ""
     
-    # 获取规则列表
-    rules=$(ufw status numbered | grep -E '^\[[0-9]+\]' | sed 's/\x1b\[[0-9;]*m//g')
+    # 显示完整的规则列表（不过滤，显示UFW原始输出）
+    echo -e "${BLUE}当前防火墙规则：${NC}"
+    ufw status numbered
     
-    if [ -z "$rules" ]; then
+    if ! ufw status numbered | grep -q "^\["; then
         echo -e "${YELLOW}当前没有任何规则${NC}"
         read -p "按Enter键继续..."
         return
     fi
     
-    echo "$rules"
+    echo ""
+    echo -e "${YELLOW}提示: UFW会为每个端口自动创建IPv4和IPv6规则${NC}"
+    echo -e "${YELLOW}      选择任意一条，脚本将智能删除该端口的所有相关规则${NC}"
     echo ""
     read -p "请输入要删除的规则编号 (0取消): " rule_num
     
@@ -343,8 +362,11 @@ delete_rule() {
         return
     fi
     
-    # 提取端口和协议信息
-    rule_info=$(echo "$rules" | grep "^\[$rule_num\]")
+    # 获取原始规则列表用于解析
+    rules_raw=$(ufw status numbered 2>/dev/null)
+    
+    # 提取选中规则的详细信息
+    rule_info=$(echo "$rules_raw" | grep "^\[ *$rule_num\]" | sed 's/\x1b\[[0-9;]*m//g')
     
     if [ -z "$rule_info" ]; then
         echo -e "${RED}✗ 无效的规则编号${NC}"
@@ -352,51 +374,103 @@ delete_rule() {
         return
     fi
     
-    # 尝试提取端口号
-    port=$(echo "$rule_info" | grep -oP '\d+(?=/(tcp|udp))' | head -1)
-    protocol=$(echo "$rule_info" | grep -oP '(?<=/)((tcp|udp))' | head -1)
+    echo ""
+    echo -e "${BLUE}已选择规则: $rule_info${NC}"
     
-    echo -e "${BLUE}准备删除规则: $rule_info${NC}"
+    # 提取端口号和协议（处理IPv4和IPv6两种格式）
+    # IPv4格式: [ 1] 22/tcp                     ALLOW IN    Anywhere
+    # IPv6格式: [ 2] 22/tcp (v6)                ALLOW IN    Anywhere (v6)
+    port=$(echo "$rule_info" | grep -oP '\d+(?=/(tcp|udp))' | head -1)
+    protocol=$(echo "$rule_info" | grep -oP '(?<=/)(tcp|udp)(?=\s|\(v6\))' | head -1)
+    
+    if [[ -z "$port" || -z "$protocol" ]]; then
+        echo -e "${RED}✗ 无法解析规则信息${NC}"
+        read -p "按Enter键继续..."
+        return
+    fi
     
     # 询问是否删除同端口的其他协议规则
-    if [[ -n "$port" && -n "$protocol" ]]; then
-        if [ "$protocol" == "tcp" ]; then
-            other_protocol="udp"
-        else
-            other_protocol="tcp"
-        fi
-        
-        # 检查是否存在同端口的其他协议规则
-        if echo "$rules" | grep -q "${port}/${other_protocol}"; then
-            read -p "是否同时删除 ${port}/${other_protocol}? (y/n): " delete_both
-        fi
-    fi
-    
-    # 删除规则
-    echo "y" | ufw delete $rule_num
-    
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓ 规则已删除${NC}"
+    delete_other_protocol="n"
+    if [ "$protocol" == "tcp" ]; then
+        other_protocol="udp"
     else
-        echo -e "${RED}✗ 删除规则失败${NC}"
+        other_protocol="tcp"
     fi
     
-    # 如果选择删除另一个协议
-    if [[ $delete_both == "y" || $delete_both == "Y" ]]; then
-        # 重新获取规则列表（因为编号已变化）
-        rules=$(ufw status numbered | grep -E '^\[[0-9]+\]' | sed 's/\x1b\[[0-9;]*m//g')
-        other_rule_num=$(echo "$rules" | grep "${port}/${other_protocol}" | grep -oP '^\[\K[0-9]+' | head -1)
-        
-        if [ -n "$other_rule_num" ]; then
-            echo "y" | ufw delete $other_rule_num
-            
-            if [ $? -eq 0 ]; then
-                echo -e "${GREEN}✓ 已删除 ${port}/${other_protocol}${NC}"
-            else
-                echo -e "${RED}✗ 删除失败${NC}"
+    # 检查是否存在同端口的其他协议规则
+    if echo "$rules_raw" | grep -q "${port}/${other_protocol}"; then
+        echo ""
+        read -p "检测到 ${port}/${other_protocol} 规则，是否一并删除? (y/n): " delete_other_protocol
+    fi
+    
+    # 收集要删除的所有规则编号
+    rules_to_delete=()
+    
+    echo ""
+    echo -e "${BLUE}正在查找所有相关规则...${NC}"
+    
+    # 查找所有同端口同协议的规则（包括IPv4和IPv6）
+    while IFS= read -r line; do
+        if echo "$line" | grep -q "${port}/${protocol}"; then
+            num=$(echo "$line" | grep -oP '^\[\s*\K[0-9]+')
+            if [ -n "$num" ]; then
+                rules_to_delete+=($num)
+                echo "  - 规则 $num: $(echo "$line" | sed 's/^\[[^]]*\] *//' | sed 's/\x1b\[[0-9;]*m//g')"
             fi
         fi
+    done < <(echo "$rules_raw" | grep "^\[")
+    
+    # 如果选择删除另一个协议
+    if [[ $delete_other_protocol == "y" || $delete_other_protocol == "Y" ]]; then
+        while IFS= read -r line; do
+            if echo "$line" | grep -q "${port}/${other_protocol}"; then
+                num=$(echo "$line" | grep -oP '^\[\s*\K[0-9]+')
+                if [ -n "$num" ]; then
+                    rules_to_delete+=($num)
+                    echo "  - 规则 $num: $(echo "$line" | sed 's/^\[[^]]*\] *//' | sed 's/\x1b\[[0-9;]*m//g')"
+                fi
+            fi
+        done < <(echo "$rules_raw" | grep "^\[")
     fi
+    
+    # 去重并从大到小排序（避免删除时编号变化）
+    rules_to_delete=($(printf '%s\n' "${rules_to_delete[@]}" | sort -rn -u))
+    
+    if [ ${#rules_to_delete[@]} -eq 0 ]; then
+        echo -e "${RED}✗ 未找到匹配的规则${NC}"
+        read -p "按Enter键继续..."
+        return
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}总共将删除 ${#rules_to_delete[@]} 条规则 (编号: ${rules_to_delete[*]})${NC}"
+    read -p "确认删除? (y/n): " confirm
+    
+    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+        echo -e "${YELLOW}取消删除${NC}"
+        read -p "按Enter键继续..."
+        return
+    fi
+    
+    # 从大到小删除规则
+    echo ""
+    echo -e "${BLUE}正在删除规则...${NC}"
+    for num in "${rules_to_delete[@]}"; do
+        echo "y" | ufw delete $num > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}  ✓ 已删除规则 $num${NC}"
+        else
+            echo -e "${RED}  ✗ 删除规则 $num 失败${NC}"
+        fi
+    done
+    
+    echo ""
+    echo -e "${GREEN}✓ 删除完成${NC}"
+    
+    # 显示删除后的规则列表
+    echo ""
+    echo -e "${BLUE}更新后的规则列表：${NC}"
+    ufw status numbered
     
     echo ""
     read -p "按Enter键继续..."
