@@ -1,13 +1,12 @@
 #!/bin/bash
 
 # ==================== 用户配置 ====================
-# [持久化] 默认配置文件地址 (脚本会自动记忆)
 DEFAULT_CONF_URL=""
 
 # ==================== 全局变量 ====================
 SCRIPT_NAME="sb.sh"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
-# [修正] 脚本更新地址
+# 脚本更新地址
 SCRIPT_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh"
 
 BIN_PATH="/usr/local/bin/sing-box"
@@ -86,9 +85,9 @@ get_sys_arch() {
     esac
 }
 
-# ==================== 核心下载模块 (通用) ====================
+# ==================== 核心功能模块 ====================
 
-# 鲁棒下载函数：支持 压缩包、JSON、脚本文件 的镜像轮询下载
+# 鲁棒下载函数
 download_file_robust() {
     local raw_url="$1"
     local save_path="$2"
@@ -98,35 +97,31 @@ download_file_robust() {
         local final_url="${mirror}${raw_url}"
         local mirror_name="${mirror:-[官方直连]}"
         
-        _log "尝试通道: ${BLUE}${mirror_name}${PLAIN}"
+        _log "尝试下载通道: ${BLUE}${mirror_name}${PLAIN}"
         
         if command -v curl &>/dev/null; then
-            # -k 忽略证书错误, -L 跟随跳转, -f 失败不写入
             curl -k -L -f --retry 2 --connect-timeout 10 --max-time 120 -o "$save_path" "$final_url"
         else
             wget --no-check-certificate -T 15 -t 2 -O "$save_path" "$final_url"
         fi
 
         if [[ -s "$save_path" ]]; then
-            # 文件校验逻辑
+            # 文件校验
             if [[ "$save_path" == *".tar.gz" ]]; then
                 if file -b "$save_path" | grep -q "gzip compressed data"; then
                     success=true; break
                 else
-                    _warn "校验失败(非gzip)，尝试下一个..."
+                    _warn "非 gzip 格式，尝试下一个..."
                 fi
             elif [[ "$save_path" == *".json" ]]; then
                  if grep -q "{" "$save_path"; then success=true; break; fi
-                 _warn "校验失败(非JSON)，尝试下一个..."
+                 _warn "非 JSON 格式，尝试下一个..."
             elif [[ "$save_path" == *".sh" ]]; then
-                 # 简单校验脚本头
                  if grep -qE "^#!" "$save_path" || grep -q "bash" "$save_path"; then 
                     success=true; break
-                 else
-                    _warn "校验失败(非脚本)，尝试下一个..."
                  fi
+                 _warn "非脚本文件，尝试下一个..."
             else
-                # 其他文件默认只要不为空就当做成功
                 success=true; break
             fi
         fi
@@ -136,10 +131,7 @@ download_file_robust() {
     if [[ "$success" == "true" ]]; then return 0; else return 1; fi
 }
 
-# ==================== Sing-box 功能模块 ====================
-
 get_latest_tag() {
-    # 尝试通过 HTTP Header 获取重定向后的真实 Tag
     local mirror="https://mirror.ghproxy.com/"
     local url="${mirror}https://github.com/${REPO}/releases/latest"
     local final_url=$(curl -k -Ls -o /dev/null -w %{url_effective} --connect-timeout 5 "$url")
@@ -148,20 +140,70 @@ get_latest_tag() {
     return 1
 }
 
+# 获取本地已安装版本
+get_installed_ver() {
+    if [[ -f "$BIN_PATH" ]]; then
+        $BIN_PATH version 2>/dev/null | head -n 1 | awk '{print $3}'
+    else
+        echo ""
+    fi
+}
+
+# 安装逻辑主函数
 download_and_install() {
     check_deps
+    
+    # === [新增功能 1] 检测本地文件 ===
+    if [[ -f "./sing-box" ]]; then
+        echo -e "${YELLOW}检测到当前目录下存在 sing-box 二进制文件。${PLAIN}"
+        read -p "是否直接安装此本地文件? [Y/n] " install_local
+        if [[ "$install_local" != "n" && "$install_local" != "N" ]]; then
+            chmod +x "./sing-box"
+            # 简单验证文件是否可执行
+            if ./sing-box version >/dev/null 2>&1; then
+                _log "本地文件校验通过，正在安装..."
+                systemctl stop sing-box 2>/dev/null
+                cp -f "./sing-box" "$BIN_PATH"
+                chmod +x "$BIN_PATH"
+                
+                local v=$($BIN_PATH version 2>/dev/null | head -n 1 | awk '{print $3}')
+                _log "安装完成！当前版本: ${GREEN}${v}${PLAIN}"
+                setup_service
+                return
+            else
+                _err "本地 sing-box 文件无法运行，将转为在线下载模式。"
+            fi
+        fi
+    fi
+
+    # === [新增功能 2] 检测已安装版本并提示升级 ===
+    local current_ver=$(get_installed_ver)
+    
+    _log "正在查找最新版本信息..."
+    local tag_version=$(get_latest_tag)
+    
+    # 兜底
+    if [[ -z "$tag_version" ]]; then
+        _warn "自动检测版本失败，默认目标版本: v1.12.13"
+        tag_version="v1.12.13"
+    fi
+
+    if [[ -n "$current_ver" ]]; then
+        echo -e "------------------------------------"
+        echo -e "当前已安装版本: ${RED}${current_ver}${PLAIN}"
+        echo -e "检测到最新版本: ${GREEN}${tag_version}${PLAIN}"
+        echo -e "------------------------------------"
+        read -p "是否进行更新/重装? [Y/n] " update_confirm
+        if [[ "$update_confirm" == "n" || "$update_confirm" == "N" ]]; then
+            _log "已取消更新。"
+            return
+        fi
+    fi
+
+    # === 开始下载流程 ===
     mkdir -p "$TMP_DIR"
     local arch=$(get_sys_arch)
     [[ "$arch" == "unknown" ]] && _fatal "不支持的架构: $(uname -m)"
-
-    _log "正在查找最新版本..."
-    local tag_version=$(get_latest_tag)
-    
-    # 兜底版本
-    if [[ -z "$tag_version" ]]; then
-        _warn "自动检测版本失败，尝试安装已知稳定版 v1.12.13"
-        tag_version="v1.12.13"
-    fi
 
     local ver_num="${tag_version#v}" 
     local filename="sing-box-${ver_num}-linux-${arch}.tar.gz"
@@ -186,7 +228,7 @@ download_and_install() {
     chmod +x "$BIN_PATH"
     rm -rf "$TMP_DIR"/*
 
-    local installed_ver=$($BIN_PATH version 2>/dev/null | head -n 1 | awk '{print $3}')
+    local installed_ver=$(get_installed_ver)
     _log "安装完成！当前版本: ${GREEN}$installed_ver${PLAIN}"
     setup_service
 }
@@ -268,63 +310,43 @@ update_config() {
     _log "服务已重启"
 }
 
-# ==================== 脚本管理模块 ====================
+# ==================== 菜单管理 ====================
 
 update_script() {
     _log "正在检查脚本更新..."
-    _log "来源: $SCRIPT_URL"
-    
     mkdir -p "$TMP_DIR"
     local tmp_script="$TMP_DIR/new_sb.sh"
     
-    # 自动尝试镜像加速下载脚本
     if download_file_robust "$SCRIPT_URL" "$tmp_script"; then
-        _log "下载成功，正在应用更新..."
-        
         if ! grep -q "#!/bin/bash" "$tmp_script"; then
-            _err "下载的文件似乎不是有效的 Shell 脚本，取消更新。"
-            return
+            _err "文件校验失败，取消更新。"; return
         fi
-
-        # 迁移旧配置 (保留用户保存的配置URL)
         local old_url=$(grep "^DEFAULT_CONF_URL=" "$INSTALL_PATH" | cut -d'"' -f2)
-        if [[ -n "$old_url" ]]; then
-            sed -i "s#^DEFAULT_CONF_URL=.*#DEFAULT_CONF_URL=\"$old_url\"#" "$tmp_script"
-        fi
+        [[ -n "$old_url" ]] && sed -i "s#^DEFAULT_CONF_URL=.*#DEFAULT_CONF_URL=\"$old_url\"#" "$tmp_script"
         
         mv "$tmp_script" "$INSTALL_PATH"
         chmod +x "$INSTALL_PATH"
-        
-        _log "更新成功！正在重启..."
+        _log "更新成功，正在重启..."
         sleep 1
         exec "$INSTALL_PATH" "script_manager"
     else
-        _err "更新失败，所有镜像源连接超时。"
+        _err "更新失败，连接超时。"
     fi
 }
 
 uninstall_script() {
     echo -e "${RED}警告：此操作将卸载脚本。${PLAIN}"
     read -p "是否同时卸载 Sing-box 服务 (删除程序/配置/服务)? [y/N] " del_sb
-    
     if [[ "$del_sb" =~ ^[yY] ]]; then
-        _log "停止服务..."
         systemctl stop sing-box 2>/dev/null
         systemctl disable sing-box 2>/dev/null
-        
-        _log "清理文件..."
-        rm -f "$SERVICE_FILE"
-        rm -f "$BIN_PATH"
+        rm -f "$SERVICE_FILE" "$BIN_PATH"
         rm -rf "$CONF_DIR"
         systemctl daemon-reload
         _log "Sing-box 已卸载。"
-    else
-        _log "已保留 Sing-box 服务，仅卸载管理脚本。"
     fi
-    
-    _log "删除脚本..."
     rm -f "$INSTALL_PATH"
-    _log "卸载完成。"
+    _log "脚本已卸载。"
     exit 0
 }
 
@@ -345,7 +367,7 @@ script_manager_menu() {
             1) update_script; break ;; 
             2) uninstall_script ;;
             0) break ;;
-            *) echo "无效输入" ;;
+            *) ;;
         esac
         read -p " 按回车继续..."
     done
@@ -358,11 +380,7 @@ service_manager_menu() {
         echo -e "${BLUE}│${PLAIN}        ${GREEN}Sing-box 服务管理${PLAIN}           ${BLUE}│${PLAIN}"
         echo -e "${BLUE}└────────────────────────────────────┘${PLAIN}"
         
-        if systemctl is-active --quiet sing-box; then
-            echo -e " 状态: ${GREEN}运行中${PLAIN}"
-        else
-            echo -e " 状态: ${RED}未运行${PLAIN}"
-        fi
+        if systemctl is-active --quiet sing-box; then echo -e " 状态: ${GREEN}运行中${PLAIN}"; else echo -e " 状态: ${RED}未运行${PLAIN}"; fi
         
         echo -e "
  ${GREEN}1.${PLAIN} 启动服务
@@ -393,27 +411,23 @@ service_manager_menu() {
     done
 }
 
-# ==================== 主菜单 ====================
-
-get_status_text() {
-    if systemctl is-active --quiet sing-box; then echo -e "${GREEN}运行中${PLAIN}"; else echo -e "${RED}未运行${PLAIN}"; fi
-}
-
 show_menu() {
     check_deps
     local arch=$(uname -m)
-    local ver="未安装"
-    [[ -f "$BIN_PATH" ]] && ver=$($BIN_PATH version 2>/dev/null | head -n 1 | awk '{print $3}')
-    
+    local ver=$(get_installed_ver)
+    [[ -z "$ver" ]] && ver="未安装"
+    [[ -f "$BIN_PATH" ]] && status_text="${GREEN}运行中${PLAIN}" || status_text="${RED}未运行${PLAIN}"
+    if ! systemctl is-active --quiet sing-box; then status_text="${RED}未运行${PLAIN}"; fi
+
     while true; do
         clear
         echo -e "
 ${BLUE}┌──────────────────────────────────────────────┐${PLAIN}
-${BLUE}│${PLAIN}           ${GREEN}Sing-box 管理面板 v7.1${PLAIN}             ${BLUE}│${PLAIN}
+${BLUE}│${PLAIN}           ${GREEN}Sing-box 管理面板 v8.0${PLAIN}             ${BLUE}│${PLAIN}
 ${BLUE}├──────────────────────────────────────────────┤${PLAIN}
 ${BLUE}│${PLAIN} 架构: ${arch}
 ${BLUE}│${PLAIN} 版本: ${GREEN}${ver}${PLAIN}
-${BLUE}│${PLAIN} 状态: $(get_status_text)
+${BLUE}│${PLAIN} 状态: ${status_text}
 ${BLUE}└──────────────────────────────────────────────┘${PLAIN}"
 
         echo -e "
