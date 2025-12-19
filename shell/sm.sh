@@ -1,874 +1,323 @@
-#!/bin/sh
-set -u
+#!/bin/bash
 
-# ==================== 配置常量 ====================
+# ==================== 全局配置 ====================
+# 脚本安装名称 (安装后使用 sm.sh 命令启动)
+SCRIPT_NAME="sm.sh"
+INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
+
+# 外部资源链接
 DEFAULT_CONFIG_URL="https://example.com/config.json"
-SCRIPT_REMOTE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
-SCRIPT_INSTALL_PATH="/usr/local/bin/sm.sh"
-SINGBOX_CONFIG_DIR_OPENWRT="/etc/sing-box"
-SINGBOX_CONFIG_DIR_DEBIAN="/etc/sing-box"
-TMP_DIR="/tmp/sm_tmp"
 TCPX_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcpx.sh"
+UFW_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/ufw.sh"
 
-# ==================== 工具函数 ====================
-_log() { printf '\033[32m[INFO]\033[0m %s\n' "$*"; }
-_warn() { printf '\033[33m[WARN]\033[0m %s\n' "$*"; }
-_err() { printf '\033[31m[ERROR]\033[0m %s\n' "$*" >&2; }
-_fatal() { _err "$*"; exit 1; }
+# 颜色定义
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[34m'
+PLAIN='\033[0m'
 
-prepare_tmp() {
-    [ -d "$TMP_DIR" ] || mkdir -p "$TMP_DIR" 2>/dev/null || _fatal "创建临时目录 $TMP_DIR 失败"
+# 临时目录 (固定目录名，确保只删除这个目录)
+TMP_DIR="/tmp/sm_manager_tmp"
+
+# ==================== 基础工具函数 ====================
+log_info() { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
+log_err() { echo -e "${RED}[ERROR]${PLAIN} $1"; }
+
+check_root() {
+    [[ $EUID -ne 0 ]] && { log_err "请使用 root 用户运行此脚本 (sudo -i)"; exit 1; }
 }
 
-detect_downloader() {
-    if command -v curl >/dev/null 2>&1; then
-        DOWNLOADER="curl"
-    elif command -v wget >/dev/null 2>&1; then
-        DOWNLOADER="wget"
-    else
-        DOWNLOADER=""
-    fi
-}
-
-download() {
-    url="$1"; out="$2"
-    detect_downloader
-    [ -z "$DOWNLOADER" ] && { _err "未检测到 curl 或 wget，无法下载"; return 1; }
-    
-    if [ "$DOWNLOADER" = "curl" ]; then
-        curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$out"
-    else
-        wget -q --tries=3 -O "$out" "$url"
-    fi
-}
-
-ensure_root() {
-    if [ "$(id -u)" -ne 0 ]; then
-        command -v sudo >/dev/null 2>&1 && SUDO="sudo" || SUDO=""
-    else
-        SUDO=""
-    fi
-}
-
-get_script_path() {
-    [ "${SCRIPT_PATH_OVERRIDE-}" ] && { printf '%s' "$SCRIPT_PATH_OVERRIDE"; return 0; }
-    
-    # 方法1: readlink (最准)
-    if command -v readlink >/dev/null 2>&1; then
-        readlink -f "$0" 2>/dev/null || printf '%s' "$0"
-    # 方法2: realpath
-    elif command -v realpath >/dev/null 2>&1; then
-        realpath "$0" 2>/dev/null || printf '%s' "$0"
-    # 方法3: 降级处理 (针对精简版 OpenWrt)
-    else
-        case "$0" in
-            /*) printf '%s' "$0" ;;
-            *) printf '%s/%s' "$(pwd)" "$0" ;;
-        esac
-    fi
-}
-
-canonicalize() {
-    target="$1"
-    [ -z "$target" ] && { printf '%s' ""; return 0; }
-    if command -v readlink >/dev/null 2>&1; then
-        readlink -f "$target" 2>/dev/null || printf '%s' "$target"
-    elif command -v realpath >/dev/null 2>&1; then
-        realpath "$target" 2>/dev/null || printf '%s' "$target"
-    else
-        printf '%s' "$target"
-    fi
-}
-
-# ==================== 系统检测 ====================
-OS_TYPE="unknown"
-OS_VERSION=""
-
-detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release 2>/dev/null || true
-        OS_VERSION="${PRETTY_NAME:-${NAME:-} ${VERSION:-}}"
-        case "${ID:-}${ID_LIKE:-}" in
-            *openwrt*|*OpenWrt*) OS_TYPE="openwrt" ;;
-        esac
-        case "${ID:-}" in
-            debian|ubuntu|raspbian) OS_TYPE="debian" ;;
-        esac
-    fi
-    
-    if [ "$OS_TYPE" = "unknown" ]; then
-        if command -v opkg >/dev/null 2>&1; then
-            OS_TYPE="openwrt"
-            OS_VERSION="OpenWrt $(uname -r 2>/dev/null || echo "Unknown")"
-        elif command -v apt-get >/dev/null 2>&1; then
-            OS_TYPE="debian"
-            OS_VERSION="Debian-based $(uname -r 2>/dev/null || echo "Unknown")"
-        fi
-    fi
-    
-    if [ "$OS_TYPE" = "unknown" ]; then
-        printf '%s' "无法自动确定系统类型。请选择：\n1) OpenWrt\n2) Debian/Ubuntu\n3) 退出\n输入选项编号: "
-        read -r opt
-        case "$opt" in
-            1) OS_TYPE="openwrt"; OS_VERSION="OpenWrt (Manual)" ;;
-            2) OS_TYPE="debian"; OS_VERSION="Debian-based (Manual)" ;;
-            *) _fatal "已退出" ;;
-        esac
-    fi
-}
-
-# ==================== 依赖安装 ====================
-install_deps_openwrt() {
-    _log "检查并安装依赖（OpenWrt）..."
-    PKGS="curl jq"
-    missing=""
-    
-    for p in $PKGS; do
-        command -v "$p" >/dev/null 2>&1 || missing="$missing $p"
-    done
-    
-    missing="$(printf '%s' "$missing" | sed 's/^ *//;s/ *$//')"
-    [ -z "$missing" ] && { _log "所有依赖已满足"; return 0; }
-    
-    command -v opkg >/dev/null 2>&1 || { _err "opkg 未找到，请手动安装：$missing"; return 1; }
-    
-    _log "执行 opkg update..."
-    opkg update >/dev/null 2>&1 || _warn "opkg update 失败（将继续尝试安装）"
-    
-    for p in $missing; do
-        [ -z "$p" ] && continue
-        _log "安装 $p..."
-        opkg install "$p" >/dev/null 2>&1 && _log "$p 安装成功" || _warn "$p 安装失败"
-    done
-}
-
-install_deps_debian() {
-    ensure_root
-    _log "检查并安装依赖（Debian）..."
-    PKGS="curl wget ca-certificates gnupg jq"
-    RUNPREFIX="${SUDO:-}"
-    
-    $RUNPREFIX apt-get update >/dev/null 2>&1 || _warn "apt-get update 失败"
-    
-    for p in $PKGS; do
-        if dpkg -s "$p" >/dev/null 2>&1; then
-            _log "$p 已安装"
-        else
-            _log "安装 $p..."
-            $RUNPREFIX apt-get install -y "$p" >/dev/null 2>&1 || _warn "安装 $p 失败"
-        fi
-    done
-}
-
-install_deps() {
-    prepare_tmp
-    detect_downloader
-    ensure_root
-    case "$OS_TYPE" in
-        openwrt) install_deps_openwrt ;;
-        debian) install_deps_debian ;;
-        *) _fatal "未知系统类型，无法安装依赖" ;;
-    esac
-}
-
-# ==================== Bash 安装 ====================
-install_bash_if_needed() {
-    command -v bash >/dev/null 2>&1 && return 0
-    
-    _warn "未检测到 bash，某些脚本需要 bash 环境"
-    printf '%s' "是否现在安装 bash？(y/N): "
-    read -r ans
-    case "$ans" in
-        [yY]*)
-            ensure_root
-            RUNPREFIX="${SUDO:-}"
-            if [ "$OS_TYPE" = "debian" ]; then
-                _log "安装 bash（Debian）..."
-                $RUNPREFIX apt-get update >/dev/null 2>&1
-                $RUNPREFIX apt-get install -y bash || { _err "安装 bash 失败"; return 1; }
-            elif [ "$OS_TYPE" = "openwrt" ]; then
-                _log "安装 bash（OpenWrt）..."
-                opkg update >/dev/null 2>&1
-                opkg install bash || { _err "安装 bash 失败"; return 1; }
-            else
-                _err "未知系统类型，无法自动安装 bash"
-                return 1
-            fi
-            _log "bash 安装成功"
-            return 0
-            ;;
-        *)
-            _log "已取消安装 bash"
-            return 1
-            ;;
-    esac
-}
-
-# ==================== Sing-box 管理 ====================
-is_singbox_installed() {
-    command -v sing-box >/dev/null 2>&1 && return 0
-    [ -x "/usr/bin/sing-box" ] || [ -x "/usr/sbin/sing-box" ] || [ -x "/bin/sing-box" ]
-}
-
-get_singbox_version() {
-    if is_singbox_installed; then
-        version=$(sing-box version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
-        printf '%s' "$version"
-    else
-        printf '%s' "未安装"
-    fi
-}
-
-get_singbox_status() {
-    if ! is_singbox_installed; then
-        printf '\033[90m%s\033[0m' "● 未安装"
-        return
-    fi
-    
-    if [ "$OS_TYPE" = "debian" ]; then
-        if command -v systemctl >/dev/null 2>&1; then
-            if systemctl is-active sing-box >/dev/null 2>&1; then
-                printf '\033[32m%s\033[0m' "● 运行中"
-            else
-                printf '\033[31m%s\033[0m' "● 已停止"
-            fi
-        else
-            printf '\033[90m%s\033[0m' "● 状态未知"
+check_os() {
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        if [[ "$ID" != "debian" && "$ID" != "ubuntu" && "$ID_LIKE" != *"debian"* ]]; then
+             log_warn "本脚本专为 Debian/Ubuntu 设计，检测到当前系统为: $ID"
+             read -p "是否强制继续? (y/N): " force
+             [[ "$force" != "y" ]] && exit 1
         fi
     else
-        # OpenWrt
-        if [ -x "/etc/init.d/sing-box" ]; then
-            if /etc/init.d/sing-box status 2>/dev/null | grep -q "running\|active"; then
-                printf '\033[32m%s\033[0m' "● 运行中"
-            elif ps w | grep -v grep | grep -q sing-box; then
-                printf '\033[32m%s\033[0m' "● 运行中"
-            else
-                printf '\033[31m%s\033[0m' "● 已停止"
-            fi
-        elif ps w | grep -v grep | grep -q sing-box; then
-            printf '\033[32m%s\033[0m' "● 运行中"
-        else
-            printf '\033[31m%s\033[0m' "● 已停止"
-        fi
+        log_err "无法检测系统版本，仅支持 Debian/Ubuntu 标准发行版。"
+        exit 1
     fi
 }
 
-install_singbox_openwrt() {
-    _log "使用官方安装脚本安装 sing-box（OpenWrt）..."
-    prepare_tmp
-    download "https://sing-box.app/install.sh" "$TMP_DIR/install_singbox.sh" || _fatal "下载安装脚本失败"
-    sh "$TMP_DIR/install_singbox.sh" || _err "运行官方安装脚本失败"
+install_dependencies() {
+    if ! command -v curl &> /dev/null || ! command -v jq &> /dev/null; then
+        log_info "正在安装必要依赖 (curl, jq, wget, tar)..."
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl wget jq tar ca-certificates gnupg >/dev/null 2>&1
+    fi
 }
 
-install_singbox_debian() {
-    _log "通过 sagernet 仓库安装 sing-box（Debian）..."
-    ensure_root
-    RUNPREFIX="${SUDO:-}"
-    
-    $RUNPREFIX mkdir -p /etc/apt/keyrings 2>/dev/null || _err "创建 /etc/apt/keyrings 失败"
-    
-    if ! download "https://sing-box.app/gpg.key" "/tmp/sagernet.asc"; then
-        _log "使用 curl 直接写入 GPG key..."
-        $RUNPREFIX curl -fsSL https://sing-box.app/gpg.key -o /etc/apt/keyrings/sagernet.asc || _fatal "写入 GPG key 失败"
+# ==================== 自安装与清理逻辑 ====================
+self_install_and_cleanup() {
+    # 如果当前脚本路径不是安装路径
+    if [[ "$(realpath "$0")" != "$(realpath "$INSTALL_PATH")" ]]; then
+        log_info "首次运行，正在执行自安装..."
+        
+        # 复制自身到系统路径
+        cp -f "$0" "$INSTALL_PATH"
+        chmod +x "$INSTALL_PATH"
+        
+        log_info "快捷方式已安装: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可随时启动"
+        
+        # 清理原始文件 (防止重复)
+        rm -f "$0"
+        
+        # 重新执行安装后的脚本
+        exec "$INSTALL_PATH" "$@"
+    fi
+}
+
+# ==================== Sing-box 核心逻辑 ====================
+get_sb_status() {
+    if systemctl is-active --quiet sing-box; then
+        echo -e "${GREEN}运行中${PLAIN}"
+    elif command -v sing-box &>/dev/null; then
+        echo -e "${RED}已停止${PLAIN}"
     else
-        $RUNPREFIX mv /tmp/sagernet.asc /etc/apt/keyrings/sagernet.asc || _fatal "移动 GPG key 失败"
+        echo -e "${YELLOW}未安装${PLAIN}"
     fi
-    
-    $RUNPREFIX chmod a+r /etc/apt/keyrings/sagernet.asc || _err "设置 key 权限失败"
-    
-    $RUNPREFIX tee /etc/apt/sources.list.d/sagernet.sources > /dev/null <<'EOF'
-Types: deb
-URIs: https://deb.sagernet.org/
-Suites: *
-Components: *
-Enabled: yes
-Signed-By: /etc/apt/keyrings/sagernet.asc
-EOF
-    
-    $RUNPREFIX apt-get update || { _err "apt-get update 失败"; return 1; }
-    $RUNPREFIX apt-get install -y sing-box || { _err "apt 安装 sing-box 失败"; return 1; }
-    
-    # 自动启用开机自启
-    _log "启用 sing-box 开机自启..."
-    $RUNPREFIX systemctl enable sing-box 2>/dev/null && _log "已启用开机自启" || _warn "启用开机自启失败"
 }
 
-install_or_update_singbox() {
-    # 在安装 sing-box 时才检查依赖
-    _log "检查依赖..."
-    install_deps
-    
-    if is_singbox_installed; then
-        _log "检测到 sing-box 已安装"
-        printf '%s' "检查更新并覆盖安装？(y/N): "
-        read -r ans
-        case "$ans" in
-            [yY]*)
-                [ "$OS_TYPE" = "openwrt" ] && install_singbox_openwrt || install_singbox_debian
-                ;;
-            *) _log "跳过更新" ;;
-        esac
+get_sb_version() {
+    if command -v sing-box &>/dev/null; then
+        sing-box version 2>/dev/null | head -n 1 | awk '{print $3}'
     else
-        _log "未检测到 sing-box，开始安装..."
-        [ "$OS_TYPE" = "openwrt" ] && install_singbox_openwrt || install_singbox_debian
+        echo "N/A"
     fi
 }
 
-uninstall_singbox() {
-    printf '%s' "确认要卸载 sing-box？（这会删除 sing-box 程序文件及配置）(y/N): "
-    read -r ans
-    case "$ans" in
-        [yY]*)
-            if [ "$OS_TYPE" = "debian" ]; then
-                ensure_root
-                RUNPREFIX="${SUDO:-}"
-                
-                _log "停止并禁用 sing-box 服务..."
-                $RUNPREFIX systemctl stop sing-box 2>/dev/null || true
-                $RUNPREFIX systemctl disable sing-box 2>/dev/null || true
-                
-                _log "卸载 sing-box 软件包..."
-                $RUNPREFIX apt-get remove --purge -y sing-box 2>&1 | grep -v "directory.*not empty so not removed" || true
-                
-                # 清理可能残留的 systemd 服务文件
-                for f in /etc/systemd/system/sing-box.service /usr/lib/systemd/system/sing-box.service /lib/systemd/system/sing-box.service; do
-                    if [ -f "$f" ]; then
-                        _log "删除服务文件: $f"
-                        $RUNPREFIX rm -f "$f" 2>/dev/null || true
-                    fi
-                done
-                
-                # 重新加载 systemd
-                $RUNPREFIX systemctl daemon-reload 2>/dev/null || true
-                
-            else
-                _log "停止 sing-box 服务..."
-                [ -x "/etc/init.d/sing-box" ] && {
-                    /etc/init.d/sing-box stop 2>/dev/null || true
-                    /etc/init.d/sing-box disable 2>/dev/null || true
-                }
-                
-                if command -v opkg >/dev/null 2>&1; then
-                    _log "使用 opkg 卸载 sing-box..."
-                    opkg remove sing-box 2>/dev/null || _warn "opkg remove 失败，尝试手动删除"
-                fi
-                
-                # 手动清理二进制文件
-                for p in /usr/bin/sing-box /usr/sbin/sing-box /bin/sing-box; do
-                    if [ -f "$p" ]; then
-                        _log "删除: $p"
-                        rm -f "$p" 2>/dev/null || true
-                    fi
-                done
-                
-                # 清理 init.d 脚本
-                [ -f "/etc/init.d/sing-box" ] && {
-                    _log "删除 init.d 脚本"
-                    rm -f "/etc/init.d/sing-box" 2>/dev/null || true
-                }
-            fi
-            
-            # 询问是否删除配置文件
-            printf '%s' "是否同时删除 sing-box 配置目录？(y/N): "
-            read -r del_conf
-            case "$del_conf" in
-                [yY]*)
-                    for confdir in "$SINGBOX_CONFIG_DIR_OPENWRT" "$SINGBOX_CONFIG_DIR_DEBIAN" /etc/sing-box; do
-                        if [ -d "$confdir" ]; then
-                            _log "删除配置目录: $confdir"
-                            rm -rf "$confdir" 2>/dev/null || _warn "删除 $confdir 失败"
-                        fi
-                    done
-                    ;;
-                *) _log "保留配置文件" ;;
-            esac
-            
-            _log "sing-box 卸载完成"
-            ;;
-        *) _log "取消卸载" ;;
-    esac
-}
+install_singbox() {
+    log_info "准备安装/更新 Sing-box (使用官方稳定源)..."
+    
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://sing-box.app/gpg.key -o /etc/apt/keyrings/sagernet.asc
+    chmod a+r /etc/apt/keyrings/sagernet.asc
 
-# ==================== 服务管理 ====================
-svc_action() {
-    action="$1"
-    if [ "$OS_TYPE" = "debian" ]; then
-        ensure_root
-        RUNPREFIX="${SUDO:-}"
-        case "$action" in
-            enable) $RUNPREFIX systemctl enable sing-box || _err "systemctl enable 失败" ;;
-            disable) $RUNPREFIX systemctl disable sing-box || _err "systemctl disable 失败" ;;
-            start) $RUNPREFIX systemctl start sing-box || _err "systemctl start 失败" ;;
-            stop) $RUNPREFIX systemctl stop sing-box || _err "systemctl stop 失败" ;;
-            kill) $RUNPREFIX systemctl kill sing-box || _err "systemctl kill 失败" ;;
-            restart) $RUNPREFIX systemctl restart sing-box || _err "systemctl restart 失败" ;;
-            status) $RUNPREFIX systemctl status sing-box || true ;;
-            journal) $RUNPREFIX journalctl -u sing-box --output cat -e || _err "journalctl 失败" ;;
-            journalf) $RUNPREFIX journalctl -u sing-box --output cat -f || _err "journalctl -f 失败" ;;
-            *) _err "未知操作 $action" ;;
-        esac
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | \
+        tee /etc/apt/sources.list.d/sagernet.list > /dev/null
+
+    apt-get update >/dev/null 2>&1
+    if apt-get install -y sing-box; then
+        systemctl enable sing-box >/dev/null 2>&1
+        systemctl start sing-box
+        log_info "Sing-box 安装成功并已启动！"
     else
-        if [ -x "/etc/init.d/sing-box" ]; then
-            case "$action" in
-                enable|disable|start|stop|restart)
-                    /etc/init.d/sing-box "$action" || _err "$action 失败"
-                    ;;
-                status)
-                    /etc/init.d/sing-box status 2>/dev/null || ps w | grep -v grep | grep sing-box || _log "未运行"
-                    ;;
-                kill)
-                    if command -v pkill >/dev/null 2>&1; then
-                        pkill -9 -f sing-box || _warn "未找到进程"
-                    else
-                        killall -9 sing-box 2>/dev/null || _warn "未找到进程"
-                    fi
-                    ;;
-                journal|journalf)
-                    if command -v logread >/dev/null 2>&1; then
-                        [ "$action" = "journalf" ] && logread -f || logread
-                    else
-                        [ -f /var/log/messages ] && tail -n 200 /var/log/messages || _err "未找到日志文件"
-                    fi
-                    ;;
-                *) _err "未知操作 $action" ;;
-            esac
-        else
-            _err "/etc/init.d/sing-box 未找到，无法通过 init.d 管理"
-        fi
+        log_err "安装失败，请检查网络连接。"
     fi
 }
 
-manage_singbox_menu() {
-    while :; do
-        clear 2>/dev/null || printf '\033[2J\033[H'
-        cat <<MENU
-┌────────────────────────────────────────┐
-│         Sing-box 服务管理              │
-└────────────────────────────────────────┘
-  1) 启动服务
-  2) 停止服务
-  3) 重启服务
-  4) 查看状态
-  5) 强制停止
-  6) 启用开机自启
-  7) 禁用开机自启
-  8) 查看日志（按页）
-  9) 实时日志
-  u) 卸载 sing-box
-  0) 返回主菜单
-────────────────────────────────────────
-MENU
-        printf '%s' "选择: "
-        read -r opt
-        case "$opt" in
-            1) svc_action start ;;
-            2) svc_action stop ;;
-            3) svc_action restart ;;
-            4) svc_action status ;;
-            5) svc_action kill ;;
-            6) svc_action enable ;;
-            7) svc_action disable ;;
-            8) svc_action journal ;;
-            9) svc_action journalf ;;
-            u|U) uninstall_singbox ;;
-            0) break ;;
-            *) _err "无效选项" ;;
-        esac
-        [ "$opt" != "0" ] && { printf '%s' "按回车继续..."; read -r _; }
-    done
+# 独立的 Sing-box 卸载函数 (供内部调用)
+do_uninstall_singbox() {
+    log_info "正在停止服务..."
+    systemctl stop sing-box 2>/dev/null
+    systemctl disable sing-box 2>/dev/null
+    
+    log_info "正在清理软件包..."
+    apt-get purge -y sing-box
+    
+    log_info "正在清理配置文件..."
+    rm -rf /etc/sing-box
+    rm -f /etc/apt/sources.list.d/sagernet.list
+    rm -f /etc/apt/keyrings/sagernet.asc
+    
+    log_info "Sing-box 及其配置已彻底移除。"
 }
 
 # ==================== 配置管理 ====================
-get_config_from_script() {
-    scriptpath=$(get_script_path)
-    [ -f "$scriptpath" ] || { printf '%s' ""; return 0; }
-    val=$(grep -m1 '^DEFAULT_CONFIG_URL=' "$scriptpath" 2>/dev/null | sed -e 's/^DEFAULT_CONFIG_URL=//' -e 's/^"//' -e 's/"$//')
-    printf '%s' "$val"
+update_config() {
+    local url="${1:-$DEFAULT_CONFIG_URL}"
+    mkdir -p "$TMP_DIR"
+    
+    log_info "正在下载配置: $url"
+    if curl -L --retry 3 -s -o "$TMP_DIR/config.json" "$url"; then
+        # 验证 JSON 格式
+        if jq -e . "$TMP_DIR/config.json" >/dev/null 2>&1; then
+            mkdir -p /etc/sing-box
+            mv "$TMP_DIR/config.json" /etc/sing-box/config.json
+            log_info "配置文件验证通过并已应用。"
+            read -p "是否重启 Sing-box 服务? (y/N): " restart_opt
+            [[ "$restart_opt" == "y" || "$restart_opt" == "Y" ]] && systemctl restart sing-box && log_info "服务已重启。"
+        else
+            log_err "下载的文件不是有效的 JSON 格式，操作已取消。"
+        fi
+    else
+        log_err "下载失败，请检查 URL 是否正确。"
+    fi
+    rm -rf "$TMP_DIR"
 }
 
-save_config_to_script() {
-    # 修复：必须先确保临时目录存在
-    prepare_tmp
-    
-    scriptpath=$(get_script_path)
-    
-    if [ ! -f "$scriptpath" ]; then
-        _err "无法定位脚本文件路径: $scriptpath"
-        return 1
-    fi
-    
-    tmp="$TMP_DIR/sm.sh.tmp.$$"
-    
-    awk -v new="DEFAULT_CONFIG_URL=\"$1\"" 'BEGIN{repl=0}
-        /^DEFAULT_CONFIG_URL=/ && repl==0 { print new; repl=1; next }
-        { print }
-        END{ if(repl==0) print new }' "$scriptpath" > "$tmp" || { _err "生成临时脚本失败"; return 1; }
-    
-    ensure_root
-    RUNPREFIX="${SUDO:-}"
-    
-    # 修复：写入逻辑增强，处理权限并使用 cat/cp 避免 inode 丢失问题
-    if [ -w "$scriptpath" ]; then
-        cat "$tmp" > "$scriptpath" 2>/dev/null
-    elif [ -n "$RUNPREFIX" ]; then
-        $RUNPREFIX cp -f "$tmp" "$scriptpath"
-        $RUNPREFIX chmod +x "$scriptpath"
+set_default_config_url() {
+    read -p "请输入新的默认配置下载链接: " new_url
+    if [[ -n "$new_url" ]]; then
+        # 修改脚本自身的变量
+        sed -i "s|^DEFAULT_CONFIG_URL=.*|DEFAULT_CONFIG_URL=\"$new_url\"|" "$INSTALL_PATH"
+        # 更新当前运行时的变量
+        DEFAULT_CONFIG_URL="$new_url"
+        log_info "默认链接已更新。"
     else
-        _err "无权限写入脚本，请尝试 sudo 运行"
-        rm -f "$tmp"
-        return 1
-    fi
-    
-    if [ $? -eq 0 ]; then
-        rm -f "$tmp"
-        _log "已更新并保存默认地址"
-        return 0
-    else
-        _err "写入失败，临时文件保留在 $tmp"
-        return 1
+        log_warn "链接为空，未修改。"
     fi
 }
 
-download_and_replace_config() {
-    url="$1"
-    prepare_tmp
-    out="$TMP_DIR/config.json"
+# ==================== 扩展功能 ====================
+run_ufw_script() {
+    mkdir -p "$TMP_DIR"
+    local ufw_local="$TMP_DIR/install_ufw.sh"
     
-    _log "从 $url 下载配置..."
-    download "$url" "$out" || { _err "下载配置失败：$url"; return 1; }
+    log_info "正在下载 UFW 防火墙脚本..."
+    if curl -L --retry 3 -s -o "$ufw_local" "$UFW_URL"; then
+        chmod +x "$ufw_local"
+        log_info "下载成功，正在启动安装程序..."
+        bash "$ufw_local"
+    else
+        log_err "UFW 脚本下载失败，请检查网络。"
+    fi
+}
+
+run_tcp_script() {
+    command -v bash &>/dev/null || apt-get install -y bash
+    mkdir -p "$TMP_DIR"
+    local tcp_local="$TMP_DIR/install_tcp.sh"
     
-    command -v jq >/dev/null 2>&1 || { _err "未检测到 jq，无法验证 JSON 格式"; return 1; }
-    
-    if ! jq -e . "$out" >/dev/null 2>&1; then
-        _err "下载的文件不是有效的 JSON"
-        printf '%s' "是否保留该文件以便手动检查？(y/N): "
-        read -r keep
-        case "$keep" in
-            [yY]*) _log "已保留下载文件：$out"; return 1 ;;
-            *) rm -f "$out"; return 1 ;;
+    log_info "正在下载 TCP 优化脚本..."
+    if curl -L --retry 3 -s -o "$tcp_local" "$TCPX_URL"; then
+        chmod +x "$tcp_local"
+        bash "$tcp_local"
+    else
+        log_err "TCP 脚本下载失败。"
+    fi
+}
+
+manage_service_menu() {
+    while true; do
+        clear
+        echo -e "┌──────────────────────────────────────────────┐"
+        echo -e "│            ${BLUE}Sing-box 服务管理${PLAIN}                 │"
+        echo -e "└──────────────────────────────────────────────┘"
+        echo -e " 当前状态: $(get_sb_status)"
+        echo
+        echo -e "  ${GREEN}1.${PLAIN} 启动服务"
+        echo -e "  ${GREEN}2.${PLAIN} 停止服务"
+        echo -e "  ${GREEN}3.${PLAIN} 重启服务"
+        echo -e "  ${GREEN}4.${PLAIN} 查看实时日志 (Ctrl+C 退出)"
+        echo -e "  ${GREEN}5.${PLAIN} 卸载 Sing-box"
+        echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
+        echo
+        read -p " 请选择: " sub_opt
+        case "$sub_opt" in
+            1) systemctl start sing-box && log_info "已启动";;
+            2) systemctl stop sing-box && log_info "已停止";;
+            3) systemctl restart sing-box && log_info "已重启";;
+            4) journalctl -u sing-box -f -o cat;;
+            5) 
+                read -p "确定要彻底卸载 Sing-box 吗? (y/N): " un_opt
+                [[ "$un_opt" == "y" ]] && do_uninstall_singbox
+                ;;
+            0) break;;
+            *) log_err "无效选项";;
         esac
-    fi
-    
-    [ "$OS_TYPE" = "openwrt" ] && confdir="$SINGBOX_CONFIG_DIR_OPENWRT" || confdir="$SINGBOX_CONFIG_DIR_DEBIAN"
-    [ -d "$confdir" ] || mkdir -p "$confdir" || { _err "创建目录失败：$confdir"; return 1; }
-    
-    if mv -f "$out" "$confdir/config.json" 2>/dev/null || cp -f "$out" "$confdir/config.json" 2>/dev/null; then
-        rm -f "$out" 2>/dev/null || true
-        _log "配置已覆盖到 $confdir/config.json"
-        return 0
-    else
-        _err "移动/复制配置文件失败"
-        return 1
-    fi
-}
-
-config_update_menu() {
-    CONFIG_URL="$(get_config_from_script)"
-    [ -z "$CONFIG_URL" ] && CONFIG_URL="$DEFAULT_CONFIG_URL"
-    
-    while :; do
-        clear 2>/dev/null || printf '\033[2J\033[H'
-        cat <<MENU
-┌────────────────────────────────────────┐
-│         配置文件管理                   │
-└────────────────────────────────────────┘
-  当前默认地址: $CONFIG_URL
-
-  1) 修改默认下载地址
-  2) 使用自定义地址下载配置
-  3) 使用默认地址更新配置
-  0) 返回主菜单
-────────────────────────────────────────
-MENU
-        printf '%s' "选择: "
-        read -r opt
-        case "$opt" in
-            1)
-                printf '%s' "输入新的默认下载地址: "
-                read -r newurl
-                if [ -n "$newurl" ]; then
-                    save_config_to_script "$newurl" && CONFIG_URL="$newurl"
-                else
-                    _err "地址为空，未修改"
-                fi
-                ;;
-            2)
-                printf '%s' "输入自定义下载地址: "
-                read -r custom
-                [ -n "$custom" ] && download_and_replace_config "$custom" || _err "地址为空"
-                ;;
-            3)
-                download_and_replace_config "$CONFIG_URL"
-                ;;
-            0) break ;;
-            *) _err "无效选项" ;;
-        esac
-        [ "$opt" != "0" ] && { printf '%s' "按回车继续..."; read -r _; }
+        [[ "$sub_opt" != "4" && "$sub_opt" != "0" ]] && read -n 1 -s -r -p "按任意键继续..."
     done
 }
 
-# ==================== UFW 防火墙脚本 ====================
-download_and_run_ufw() {
-    _log "下载 UFW 防火墙管理脚本..."
-    prepare_tmp
-    out="$TMP_DIR/ufw.sh"
-    
-    UFW_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/ufw.sh"
-    
-    if ! download "$UFW_URL" "$out"; then
-        _err "下载 UFW 脚本失败"
-        return 1
-    fi
-    
-    chmod +x "$out" || { _err "添加执行权限失败"; return 1; }
-    
-    # 检查并安装 bash（如果需要）
-    if ! command -v bash >/dev/null 2>&1; then
-        _warn "UFW 脚本需要 bash 环境"
-        if ! install_bash_if_needed; then
-            _err "无法运行 UFW 脚本：缺少 bash"
-            return 1
-        fi
-    fi
-    
-    _log "UFW 脚本下载成功，开始运行..."
-    bash "$out"
-}
-
-# ==================== TCP 优化脚本 ====================
-download_tcpx() {
-    _log "下载 TCP 优化脚本..."
-    prepare_tmp
-    out="$TMP_DIR/tcpx.sh"
-    
-    if ! download "$TCPX_URL" "$out"; then
-        _err "下载 TCP 优化脚本失败"
-        return 1
-    fi
-    
-    chmod +x "$out" || { _err "添加执行权限失败"; return 1; }
-    
-    # 检查并安装 bash（如果需要）
-    if ! command -v bash >/dev/null 2>&1; then
-        if ! install_bash_if_needed; then
-            _warn "继续使用 sh 运行，可能会失败..."
-            sh "$out" 2>&1 || {
-                _err "脚本执行失败"
-                _log ""
-                _log "原因：TCP 优化脚本使用了 bash 特性，而当前系统只有 sh"
-                _log "解决方案："
-                [ "$OS_TYPE" = "debian" ] && _log "  运行: apt-get install bash"
-                [ "$OS_TYPE" = "openwrt" ] && _log "  运行: opkg install bash"
-                return 1
-            }
-            return 0
-        fi
-    fi
-    
-    # 使用 bash 执行
-    _log "使用 bash 运行 TCP 优化脚本..."
-    bash "$out"
-}
-
-# ==================== 脚本管理 ====================
-update_script() {
-    prepare_tmp
-    out="$TMP_DIR/sm.sh"
-    
-    _log "从 $SCRIPT_REMOTE_URL 下载最新脚本..."
-    download "$SCRIPT_REMOTE_URL" "$out" || { _err "下载脚本失败"; return 1; }
-    
-    ensure_root
-    RUNPREFIX="${SUDO:-}"
-    
-    [ "$OS_TYPE" = "openwrt" ] && target="/usr/sbin/sm.sh" || target="$SCRIPT_INSTALL_PATH"
-    target_dir="$(dirname "$target")"
-    [ -d "$target_dir" ] || $RUNPREFIX mkdir -p "$target_dir" 2>/dev/null
-    
-    if [ "$(id -u)" -eq 0 ]; then
-        mv -f "$out" "$target" && chmod +x "$target"
-    elif [ -n "$RUNPREFIX" ]; then
-        $RUNPREFIX sh -c "cat '$out' > '$target' && chmod +x '$target'" && rm -f "$out"
-    else
-        mv -f "$out" "./sm.sh" && chmod +x "./sm.sh" && target="$(pwd)/sm.sh"
-    fi
-    
-    _log "脚本已更新到 $target"
-}
-
+# ==================== 安全卸载逻辑 (重点更新) ====================
 uninstall_script() {
-    printf '%s' "确认卸载脚本并删除脚本生成的所有文件？(y/N): "
-    read -r ans
-    case "$ans" in
-        [yY]*)
-            files=""
-            cur="$(get_script_path)"
-            
-            # 收集脚本文件
-            for f in "$SCRIPT_INSTALL_PATH" "/usr/sbin/sm.sh" "$cur" "/root/sm.sh" "$HOME/sm.sh"; do
-                [ -e "$f" ] && files="$files
-$f"
-            done
-            
-            # 收集临时目录
-            [ -d "$TMP_DIR" ] && files="$files
-$TMP_DIR"
-            
-            files="$(printf '%s' "$files" | sed '/^$/d' | sort -u)"
-            
-            if [ -z "$files" ]; then
-                _log "未检测到可删除的脚本文件"
-            else
-                printf '%s\n' "将删除如下脚本文件/目录：" "$files"
-                printf '%s' "确认删除上列脚本文件？(y/N): "
-                read -r confirm
-                case "$confirm" in
-                    [yY]*)
-                        ensure_root
-                        RUNPREFIX="${SUDO:-}"
-                        printf '%s\n' "$files" | while IFS= read -r p; do
-                            [ -z "$p" ] || [ ! -e "$p" ] && continue
-                            _log "删除: $p"
-                            if [ -d "$p" ]; then
-                                $RUNPREFIX rm -rf "$p" 2>/dev/null || _warn "删除 $p 失败"
-                            else
-                                $RUNPREFIX rm -f "$p" 2>/dev/null || _warn "删除 $p 失败"
-                            fi
-                        done
-                        _log "脚本文件已删除"
-                        ;;
-                    *) _log "取消删除脚本文件" ;;
-                esac
-            fi
-            
-            # 单独询问是否卸载 sing-box
-            printf '\n%s' "是否同时卸载 sing-box？(y/N): "
-            read -r ans2
-            case "$ans2" in
-                [yY]*) uninstall_singbox ;;
-                *) _log "保留 sing-box" ;;
-            esac
-            ;;
-        *) _log "取消卸载脚本" ;;
-    esac
-}
+    echo -e "\n${RED}⚠️  正在进行卸载程序...${PLAIN}"
+    
+    # 1. 询问是否卸载 Sing-box
+    echo -e "是否同时卸载 ${BLUE}Sing-box${PLAIN} 软件及其所有配置文件？"
+    read -p "请输入 (y/N): " uninstall_sb
+    if [[ "$uninstall_sb" == "y" || "$uninstall_sb" == "Y" ]]; then
+        do_uninstall_singbox
+    else
+        log_info "已保留 Sing-box 软件及配置。"
+    fi
 
-script_management_menu() {
-    while :; do
-        clear 2>/dev/null || printf '\033[2J\033[H'
-        cat <<MENU
-┌────────────────────────────────────────┐
-│         脚本管理                       │
-└────────────────────────────────────────┘
-  1) 更新脚本
-  2) 卸载脚本（清理脚本生成的文件）
-  0) 返回主菜单
-────────────────────────────────────────
-MENU
-        printf '%s' "选择: "
-        read -r opt
-        case "$opt" in
-            1) update_script ;;
-            2) uninstall_script ;;
-            0) break ;;
-            *) _err "无效选项" ;;
-        esac
-        [ "$opt" != "0" ] && { printf '%s' "按回车继续..."; read -r _; }
-    done
+    # 2. 询问是否删除脚本自身
+    echo -e "\n是否删除 ${BLUE}本管理脚本 ($SCRIPT_NAME)${PLAIN} 及清理缓存文件？"
+    read -p "请输入 (y/N): " uninstall_self
+    if [[ "$uninstall_self" == "y" || "$uninstall_self" == "Y" ]]; then
+        # 安全检查：确保变量不为空且路径正确
+        if [[ -n "$INSTALL_PATH" && "$INSTALL_PATH" == "/usr/local/bin/sm.sh" ]]; then
+            rm -f "$INSTALL_PATH"
+            log_info "脚本文件已删除: $INSTALL_PATH"
+        fi
+        
+        if [[ -n "$TMP_DIR" && "$TMP_DIR" == "/tmp/sm_manager_tmp" ]]; then
+            rm -rf "$TMP_DIR"
+            log_info "临时缓存已清理: $TMP_DIR"
+        fi
+        
+        echo -e "${GREEN}卸载完成。再见！${PLAIN}"
+        exit 0
+    else
+        log_info "取消卸载脚本。"
+    fi
 }
 
 # ==================== 主菜单 ====================
-main_menu() {
-    while :; do
-        clear 2>/dev/null || printf '\033[2J\033[H'
-        
-        # 获取系统信息
-        hostname="$(uname -n 2>/dev/null || echo "unknown")"
-        uptime_info="$(uptime 2>/dev/null | sed 's/.*up *//' | sed 's/,.*//' || echo "unknown")"
-        
-        # 获取 sing-box 信息
-        singbox_version="$(get_singbox_version)"
-        singbox_status="$(get_singbox_status)"
-        
-        cat <<HEADER
-╔═══════════════════════════════════════╗
-║      Sing-box Manager v2.0            ║
-╠═══════════════════════════════════════╣
-║ 主机名: ${hostname}
-║ 系统: ${OS_VERSION}
-║ 运行时间: ${uptime_info}
-╠═══════════════════════════════════════╣
-║ Sing-box 版本: ${singbox_version}
-║ 运行状态: ${singbox_status}
-╚═══════════════════════════════════════╝
-HEADER
-        
-        cat <<MENU
+show_menu() {
+    clear
+    local version=$(get_sb_version)
+    local status=$(get_sb_status)
+    local uptime=$(uptime -p | sed 's/up //')
+    
+    echo -e "┌──────────────────────────────────────────────┐"
+    echo -e "│             ${BLUE}Sing-box 管理脚本${PLAIN}                │"
+    echo -e "│             ${YELLOW}Debian/Ubuntu 专用${PLAIN}               │"
+    echo -e "└──────────────────────────────────────────────┘"
+    echo -e " 系统运行时间: ${uptime}"
+    echo -e " Sing-box版本: ${BLUE}${version}${PLAIN}"
+    echo -e " 运行状态    : ${status}"
+    echo -e "────────────────────────────────────────────────"
+    echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
+    echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"
+    echo -e "  ${GREEN}3.${PLAIN} 更新配置文件 (使用默认链接)"
+    echo -e "  ${GREEN}4.${PLAIN} 更新配置文件 (输入自定义链接)"
+    echo -e "  ${GREEN}5.${PLAIN} 修改默认配置下载链接"
+    echo -e "────────────────────────────────────────────────"
+    echo -e "  ${GREEN}6.${PLAIN} 安装 UFW 防火墙 (安全推荐)"
+    echo -e "  ${GREEN}7.${PLAIN} 系统 TCP 网络优化"
+    echo -e "  ${GREEN}8.${PLAIN} 卸载脚本 (可选卸载 Sing-box)"
+    echo -e "  ${GREEN}0.${PLAIN} 退出"
+    echo -e "────────────────────────────────────────────────"
+    echo -e " 快捷指令: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
+    echo
+}
 
-  1) 下载 UFW 管理脚本（建议）
-  2) 安装或更新 sing-box
-  3) 更新配置文件
-  4) sing-box 服务管理
-  5) 下载 TCP 优化脚本
-  6) 脚本管理
-  0) 退出
-
-────────────────────────────────────────
-MENU
-        printf '%s' "请选择操作: "
-        read -r opt
+main() {
+    check_root
+    check_os
+    install_dependencies
+    self_install_and_cleanup "$@"
+    
+    while true; do
+        show_menu
+        read -p " 请输入选项 [0-8]: " opt
         case "$opt" in
-            1) 
-                _log "提示：安装 UFW 防火墙可以有效保障服务器安全"
-                printf '%s' "是否继续下载并运行 UFW 管理脚本？(y/N): "
-                read -r ans
-                case "$ans" in
-                    [yY]*) download_and_run_ufw ;;
-                    *) _log "已取消" ;;
-                esac
+            1) install_singbox ;;
+            2) manage_service_menu ;;
+            3) update_config "$DEFAULT_CONFIG_URL" ;;
+            4) 
+                read -p "请输入配置链接: " custom_url
+                [[ -n "$custom_url" ]] && update_config "$custom_url"
                 ;;
-            2) install_or_update_singbox ;;
-            3) config_update_menu ;;
-            4) manage_singbox_menu ;;
-            5) download_tcpx ;;
-            6) script_management_menu ;;
-            0) _log "退出"; break ;;
-            *) _err "无效选项，请输入 0-6 之间的数字" ;;
+            5) set_default_config_url ;;
+            6) run_ufw_script ;;
+            7) run_tcp_script ;;
+            8) uninstall_script ;;
+            0) exit 0 ;;
+            *) log_err "无效选项，请重新输入" ;;
         esac
-        [ "$opt" != "0" ] && { printf '%s' "按回车返回菜单..."; read -r _; }
+        read -n 1 -s -r -p "按任意键返回菜单..."
     done
 }
 
-# ==================== 脚本安装 ====================
-install_self_if_needed() {
-    cur="$(get_script_path)"
-    [ "$OS_TYPE" = "openwrt" ] && target="/usr/sbin/sm.sh" || target="$SCRIPT_INSTALL_PATH"
-    
-    [ "$(canonicalize "$cur")" = "$(canonicalize "$target")" ] && return 0
-    
-    ensure_root
-    RUNPREFIX="${SUDO:-}"
-    target_dir="$(dirname "$target")"
-    [ -d "$target_dir" ] || $RUNPREFIX mkdir -p "$target_dir" 2>/dev/null
-    
-    if [ "$(id -u)" -eq 0 ]; then
-        mv -f "$cur" "$target" && chmod +x "$target"
-    elif [ -n "$RUNPREFIX" ]; then
-        $RUNPREFIX sh -c "cat '$cur' > '$target' && rm -f '$cur' && chmod +x '$target'"
-    else
-        cp -f "$cur" "$target" && rm -f "$cur" && chmod +x "$target"
-    fi
-    
-    _log "已将脚本移动到 $target"
-    exec "$target" "$@"
-}
+# 捕获退出信号，清理临时文件
+trap 'rm -rf "$TMP_DIR"; exit' INT TERM
 
-# ==================== 主函数 ====================
-main() {
-    detect_os
-    install_self_if_needed "$@"
-    main_menu
-}
-
-trap 'rm -rf "$TMP_DIR" 2>/dev/null; exit' INT TERM
-main
+main "$@"
