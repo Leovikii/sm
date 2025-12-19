@@ -6,6 +6,7 @@ DEFAULT_CONF_URL=""
 # ==================== 全局变量 ====================
 SCRIPT_NAME="sb.sh"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
+# 脚本更新/安装源
 SCRIPT_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh"
 
 BIN_PATH="/usr/local/bin/sing-box"
@@ -18,11 +19,9 @@ TMP_DIR="/tmp/sb_tmp_$$"
 
 # 镜像池 (Sing-box下载、脚本更新、版本检测均使用此池)
 MIRRORS=(
+    "https://gh-proxy.com/"
     "https://ghproxy.net/"
-    "https://mirror.ghproxy.com/"
-    "https://fastgh.yzu.edu.cn/"
-    "https://github.moeyy.xyz/"
-    "" 
+    "" # 官方直连 (最后尝试，适用于海外VPS或已开启全局代理的情况)
 )
 
 # 颜色
@@ -99,6 +98,7 @@ download_file_robust() {
         _log "尝试下载通道: ${BLUE}${mirror_name}${PLAIN}"
         
         if command -v curl &>/dev/null; then
+            # -k:忽略SSL错误, -L:跟随跳转, -f:HTTP错误不输出
             curl -k -L -f --retry 2 --connect-timeout 10 --max-time 60 -o "$save_path" "$final_url"
         else
             wget --no-check-certificate -T 15 -t 2 -O "$save_path" "$final_url"
@@ -124,19 +124,12 @@ download_file_robust() {
     if [[ "$success" == "true" ]]; then return 0; else return 1; fi
 }
 
-# [核心修复] 通过解析 HTML 源码获取最新版本
+# 通过解析 HTML 源码获取最新版本
 get_latest_tag() {
-    # 轮询镜像，只要有一个能返回 HTML 即可
     for mirror in "${MIRRORS[@]}"; do
-        # 构造 URL: 镜像 + GitHub Releases Latest 页面
         local url="${mirror}https://github.com/${REPO}/releases/latest"
-        
-        # 下载页面 HTML 内容 (限制 5秒超时)
         local html=$(curl -k -L -s --connect-timeout 5 --max-time 10 "$url")
-        
-        # 在 HTML 中查找版本号
-        # 逻辑：查找 href="/SagerNet/sing-box/releases/tag/v1.12.13" 这样的结构
-        # grep -m 1 取第一个匹配项，通常就是最新版
+        # 提取 href="/SagerNet/sing-box/releases/tag/v..."
         local tag=$(echo "$html" | grep -oE "releases/tag/v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?" | head -n 1 | awk -F'/' '{print $3}')
         
         if [[ -n "$tag" ]]; then
@@ -179,13 +172,12 @@ download_and_install() {
         fi
     fi
 
-    # 2. 智能版本检测与升级提示
+    # 2. 智能版本检测
     local current_ver=$(get_installed_ver)
     
     _log "正在通过镜像获取最新版本信息..."
     local tag_version=$(get_latest_tag)
     
-    # 兜底策略
     if [[ -z "$tag_version" ]]; then
         _warn "自动检测版本失败，将使用默认推荐版本。"
         tag_version="v1.12.13"
@@ -193,13 +185,11 @@ download_and_install() {
         _log "检测到最新版本: ${GREEN}${tag_version}${PLAIN}"
     fi
 
-    # 如果已安装，进行版本对比提示
     if [[ -n "$current_ver" ]]; then
         echo -e "------------------------------------"
         echo -e " 当前已安装: ${RED}${current_ver}${PLAIN}"
         echo -e " 目标安装版: ${GREEN}${tag_version}${PLAIN}"
         echo -e "------------------------------------"
-        # 如果版本一致，提示是否覆盖
         if [[ "$current_ver" == "$tag_version" || "$current_ver" == "${tag_version#v}" ]]; then
              read -p "版本一致，是否强制重新安装? [y/N] " reinstall
              if [[ "$reinstall" != "y" && "$reinstall" != "Y" ]]; then return; fi
@@ -209,7 +199,6 @@ download_and_install() {
         fi
     fi
 
-    # 3. 下载流程
     mkdir -p "$TMP_DIR"
     local arch=$(get_sys_arch)
     [[ "$arch" == "unknown" ]] && _fatal "不支持的架构: $(uname -m)"
@@ -451,7 +440,7 @@ show_menu() {
         clear
         echo -e "
 ${BLUE}┌──────────────────────────────────────────────┐${PLAIN}
-${BLUE}│${PLAIN}           ${GREEN}Sing-box 管理面板 v10.0${PLAIN}            ${BLUE}│${PLAIN}
+${BLUE}│${PLAIN}           ${GREEN}Sing-box 管理面板 v12.0${PLAIN}            ${BLUE}│${PLAIN}
 ${BLUE}├──────────────────────────────────────────────┤${PLAIN}
 ${BLUE}│${PLAIN} 架构: ${arch}
 ${BLUE}│${PLAIN} 版本: ${GREEN}${ver}${PLAIN}

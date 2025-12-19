@@ -10,10 +10,10 @@ wget -qO /root/sm.sh https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm
 # SB
 sb binary manager for client
 ```cli
-curl -fsSL https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh -o /root/sb.sh && chmod +x /root/sb.sh && /root/sb.sh
+bash <(curl -L -s https://gh-proxy.com/https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh)
 ```
 ```cli
-wget -qO /root/sb.sh https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh && chmod +x /root/sb.sh && /root/sb.sh
+wget -O sb.sh https://gh-proxy.com/https://raw.githubusercontent.com/Leovikii/sm/main/shell/sb.sh && chmod +x sb.sh && ./sb.sh
 ```
 
 # UFW-M
