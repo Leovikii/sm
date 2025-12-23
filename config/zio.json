@@ -12,7 +12,7 @@
       },
       {
         "tag": "dns_direct",
-        "type": "https",
+        "type": "quic",
         "server": "dns.alidns.com",
         "domain_resolver": "dns_direct_resolver"
       },
