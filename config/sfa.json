@@ -8,7 +8,7 @@
       {
         "tag": "dns_direct_resolver",
         "type": "udp",
-        "server": "1119.29.29.29"
+        "server": "119.29.29.29"
       },
       {
         "tag": "dns_direct",
