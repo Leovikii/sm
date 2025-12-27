@@ -66,8 +66,7 @@
       }
     ],
     "final": "dns_proxy",
-    "independent_cache": true,
-    "cache_capacity": 4096
+    "independent_cache": true
   },
   "inbounds": [
     {
