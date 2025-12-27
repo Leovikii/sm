@@ -17,29 +17,15 @@
         "domain_resolver": "dns_direct_resolver"
       },
       {
-        "tag": "dns_proxy_resolver",
-        "type": "udp",
-        "server": "1.1.1.1",
-        "detour": "MR"
-      },
-      {
         "tag": "dns_proxy",
         "type": "https",
-        "server": "dns.cloudflare.com",
-        "domain_resolver": "dns_proxy_resolver",
-        "detour": "MR"
-      },
-      {
-        "tag": "dns_jp_resolver",
-        "type": "udp",
         "server": "1.1.1.1",
-        "detour": "JP"
+        "detour": "MR"
       },
       {
         "tag": "dns_jp",
         "type": "https",
-        "server": "dns.cloudflare.com",
-        "domain_resolver": "dns_jp_resolver",
+        "server": "1.1.1.1",
         "detour": "JP"
       }
     ],
@@ -80,7 +66,8 @@
       }
     ],
     "final": "dns_proxy",
-    "independent_cache": true
+    "independent_cache": true,
+    "cache_capacity": 4096
   },
   "inbounds": [
     {
