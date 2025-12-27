@@ -6,9 +6,15 @@
   "dns": {
     "servers": [
       {
-        "tag": "dns_direct",
+        "tag": "dns_direct_resolver",
         "type": "udp",
-        "server": "223.5.5.5"
+        "server": "119.29.29.29"
+      },
+      {
+        "tag": "dns_direct",
+        "type": "https",
+        "server": "doh.pub",
+        "domain_resolver": "dns_direct_resolver"
       },
       {
         "tag": "dns_proxy",
