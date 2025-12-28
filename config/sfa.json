@@ -115,14 +115,6 @@
     },
     {
       "type": "selector",
-      "tag": "FR",
-      "outbounds": [
-        "MR",
-        "DR"
-      ]
-    },
-    {
-      "type": "selector",
       "tag": "VLAN",
       "outbounds": [
         "DR"
@@ -264,7 +256,7 @@
         "download_detour": "DR"
       }
     ],
-    "final": "FR",
+    "final": "MR",
     "default_domain_resolver": {
       "server": "dns_direct"
     },
