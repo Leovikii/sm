@@ -106,8 +106,7 @@
       "type": "selector",
       "tag": "GLOBAL",
       "outbounds": [
-        "MR",
-        "DR"
+        "MR"
       ]
     },
     {
