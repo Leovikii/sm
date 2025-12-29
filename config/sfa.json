@@ -43,10 +43,6 @@
         "action": "reject"
       },
       {
-        "rule_set": "rule_direct",
-        "server": "dns_direct"
-      },
-      {
         "rule_set": [
           "rule_dlsite",
           "rule_dmm"
@@ -59,6 +55,7 @@
       },
       {
         "rule_set": [
+          "rule_direct",
           "rule_cnsite",
           "rule_samsung"
         ],
@@ -131,8 +128,7 @@
       "type": "selector",
       "tag": "JP",
       "outbounds": [
-        "MR",
-        "DR"
+        "MR"
       ]
     }
   ],
@@ -161,6 +157,10 @@
         "action": "hijack-dns"
       },
       {
+        "ip_is_private": true,
+        "outbound": "DR"
+      },
+      {
         "clash_mode": "direct",
         "outbound": "DR"
       },
@@ -171,19 +171,6 @@
       {
         "ip_cidr": "10.9.6.0/24",
         "outbound": "VLAN"
-      },
-      {
-        "type": "logical",
-        "mode": "or",
-        "rules": [
-          {
-            "ip_is_private": true
-          },
-          {
-            "rule_set": "rule_direct"
-          }
-        ],
-        "outbound": "DR"
       },
       {
         "rule_set": [
@@ -198,6 +185,7 @@
       },
       {
         "rule_set": [
+          "rule_direct",
           "rule_cnip",
           "rule_cnsite",
           "rule_samsung"
