@@ -119,14 +119,7 @@
             "tag": "MR",
             "outbounds": []
         },
-        {
-            "type": "selector",
-            "tag": "GLOBAL",
-            "outbounds": [
-                "MR",
-                "DR"
-            ]
-        },
+
         {
             "type": "selector",
             "tag": "RR",
@@ -167,7 +160,7 @@
             },
             {
                 "clash_mode": "global",
-                "outbound": "GLOBAL"
+                "outbound": "MR"
             },
             {
                 "rule_set": [
