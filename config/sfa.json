@@ -157,6 +157,10 @@
         "action": "hijack-dns"
       },
       {
+        "ip_cidr": "10.9.6.0/24",
+        "outbound": "VLAN"
+      },
+      {
         "ip_is_private": true,
         "outbound": "DR"
       },
@@ -167,10 +171,6 @@
       {
         "clash_mode": "global",
         "outbound": "GLOBAL"
-      },
-      {
-        "ip_cidr": "10.9.6.0/24",
-        "outbound": "VLAN"
       },
       {
         "rule_set": [
