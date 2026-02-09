@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e-hentai Plus
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Continuous reading mode with floating page control and ultra-fast loading
 // @author       Viki
 // @match        https://e-hentai.org/g/*
@@ -29,8 +29,7 @@
         html,body{background-color:#111!important;color:#ccc!important;margin:0;overflow-x:hidden}
         #gdt{display:flex;flex-direction:column;align-items:center;width:100%;max-width:1200px;margin:auto;padding-bottom:100px}
         .page-batch{width:100%;display:flex;flex-direction:column;align-items:center;margin-bottom:60px}
-        .r-img{display:block;width:auto;max-width:100%;margin-bottom:20px;background:transparent;box-shadow:0 0 20px rgba(0,0,0,0.5);opacity:0;transition:opacity 0.3s}
-        .r-img.loaded{opacity:1}
+        .r-img{display:block;width:auto;max-width:100%;margin-bottom:20px;background:transparent;box-shadow:0 0 20px rgba(0,0,0,0.5)}
         .r-ph{color:#555;margin-bottom:50px;text-align:center;min-height:400px;display:flex;align-items:center;justify-content:center;font-family:sans-serif;font-size:18px;border:1px dashed #333;width:100%;flex-direction:column;gap:10px}
         .r-ph.loading{color:#888;border-color:#555}
         .r-ph.error{color:#d44;border-color:#d44}
@@ -153,7 +152,6 @@
                     const newImg = document.createElement('img');
                     newImg.src = newSrc;
                     newImg.className = 'r-img';
-                    newImg.onload = () => newImg.classList.add('loaded');
                     placeholder.parentNode?.replaceChild(newImg, placeholder);
                 }
             });
@@ -354,7 +352,6 @@
                         };
 
                         img.onload = () => {
-                            img.classList.add('loaded');
                             loadedCount++;
                             if (loadedCount % 5 === 0 || loadedCount === totalCount) {
                                 console.log(`[✓] P${pIndex} Loaded ${loadedCount}/${totalCount}`);
