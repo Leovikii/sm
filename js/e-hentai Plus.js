@@ -3,7 +3,7 @@
 // @name:zh-CN   E-Hentai Plus
 // @namespace    http://tampermonkey.net/
 // @homepageURL   https://github.com/Leovikii/sm/tree/main/js
-// @version      2.1
+// @version      2.2
 // @description       Continuous reading mode with floating page control and ultra-fast loading
 // @description:zh-CN E-Hentai 的增强型连续阅读模式，具有高级功能和优化。
 // @author       Viki
@@ -22,6 +22,8 @@
 
     let autoScroll = GM_getValue('autoScroll', false);
     let showControl = GM_getValue('showControl', true);
+    let readMode = GM_getValue('readMode', 'scroll'); // 'scroll' or 'single'
+    let autoEnterSinglePage = GM_getValue('autoEnterSinglePage', false);
 
     const CFG = {
         nextPage: '3000px 0px',
@@ -60,9 +62,14 @@
         .arrow-down:hover{background:#555;transform:scale(1.1) translateY(0)}
         .arrow-down.disabled{opacity:0.3!important;cursor:not-allowed;pointer-events:none!important}
         .arrow-down svg{width:20px;height:20px;fill:#fff;transform:rotate(90deg)}
-        .settings-btn{position:absolute;left:-50px;top:50%;transform:translateY(-50%);width:36px;height:36px;background:#333;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.3s;opacity:0;pointer-events:none}
+        .reader-btn{position:absolute;left:-50px;top:50%;transform:translateY(-46px);width:36px;height:36px;background:#333;border-radius:50%;display:none;align-items:center;justify-content:center;cursor:pointer;transition:all 0.3s;opacity:0.4}
+        .reader-btn.visible{display:flex}
+        .float-control:hover .reader-btn{opacity:1}
+        .reader-btn:hover{background:#555;transform:translateY(-46px) scale(1.1)}
+        .reader-btn svg{width:18px;height:18px;fill:#fff}
+        .settings-btn{position:absolute;left:-50px;top:50%;transform:translateY(10px);width:36px;height:36px;background:#333;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.3s;opacity:0;pointer-events:none}
         .float-control:hover .settings-btn, .settings-btn:hover, .settings-panel:hover ~ .settings-btn{opacity:1;pointer-events:auto}
-        .settings-btn:hover{background:#555;transform:translateY(-50%) scale(1.1)}
+        .settings-btn:hover{background:#555;transform:translateY(10px) scale(1.1)}
         .settings-btn svg{width:18px;height:18px;fill:#fff}
         .settings-panel{position:absolute;left:-210px;top:50%;transform:translateY(-50%) translateX(-10px);background:#1a1a1a;border:1px solid #555;border-radius:8px;padding:12px;min-width:160px;opacity:0;pointer-events:none;transition:all 0.3s;box-shadow:0 4px 12px rgba(0,0,0,0.5)}
         .settings-panel.show{opacity:1;pointer-events:auto;transform:translateY(-50%) translateX(0)}
@@ -74,6 +81,19 @@
         .toggle-switch.on{background:#4CAF50}
         .toggle-slider{width:16px;height:16px;background:#fff;border-radius:50%;position:absolute;top:2px;left:2px;transition:left 0.3s}
         .toggle-switch.on .toggle-slider{left:22px}
+        .single-page-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;z-index:9998;display:none;align-items:center;justify-content:center}
+        .single-page-overlay.active{display:flex}
+        .sp-image-container{width:100%;height:100%;display:flex;align-items:center;justify-content:center;position:relative}
+        .sp-current-image{max-width:100%;max-height:100%;object-fit:contain;user-select:none}
+        .sp-close-btn{position:absolute;top:20px;right:20px;width:40px;height:40px;background:rgba(51,51,51,0.8);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:24px;color:#fff;transition:all 0.3s;z-index:10}
+        .sp-close-btn:hover{background:rgba(85,85,85,0.9);transform:scale(1.1)}
+        .sp-scrollbar{position:absolute;right:20px;top:50%;transform:translateY(-50%);width:8px;height:80%;background:rgba(51,51,51,0.5);border-radius:4px;z-index:10;cursor:pointer;transition:all 0.3s}
+        .sp-scrollbar:hover{width:12px;background:rgba(51,51,51,0.7)}
+        .sp-scrollbar-thumb{position:absolute;top:0;left:0;width:100%;background:rgba(255,255,255,0.6);border-radius:4px;transition:background 0.3s;cursor:pointer}
+        .sp-scrollbar:hover .sp-scrollbar-thumb{background:rgba(255,255,255,0.8)}
+        .sp-scrollbar-label{position:absolute;right:100%;margin-right:12px;top:50%;transform:translateY(-50%);background:rgba(26,26,26,0.9);padding:6px 12px;border-radius:6px;color:#fff;font-family:monospace;font-size:13px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.3s}
+        .sp-scrollbar:hover .sp-scrollbar-label{opacity:1}
+        .sp-loading{color:#888;font-size:18px;font-family:sans-serif}
     `;
     document.head.appendChild(style);
 
@@ -98,6 +118,7 @@
 
     const svgArrow = `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`;
     const svgSettings = `<svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>`;
+    const svgReader = `<svg viewBox="0 0 24 24"><path d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"/></svg>`;
 
     const calcTotal = (doc, fallbackLinkCount) => {
         const gpc = q('.gpc', doc);
@@ -187,14 +208,18 @@
         totalNum.className = 'circle-total';
         totalNum.textContent = `/ ${totalPage}`;
 
-        circle.appendChild(pageNum);
-        circle.appendChild(totalNum);
+        const pageDisplay = document.createElement('div');
+        pageDisplay.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;';
+        pageDisplay.appendChild(pageNum);
+        pageDisplay.appendChild(totalNum);
+
+        circle.appendChild(pageDisplay);
 
         circle.onclick = () => {
             if (circle.classList.contains('input-mode')) return;
 
             circle.classList.add('input-mode');
-            circle.innerHTML = '';
+            pageDisplay.style.display = 'none';
 
             const input = document.createElement('input');
             input.className = 'circle-input';
@@ -203,17 +228,16 @@
             input.min = 1;
             input.max = totalPage;
 
-            circle.appendChild(input);
+            circle.insertBefore(input, circle.firstChild);
             input.focus();
             input.select();
 
             const exitInput = () => {
                 circle.classList.remove('input-mode');
-                circle.innerHTML = '';
+                if (input.parentNode) input.remove();
+                pageDisplay.style.display = 'flex';
                 pageNum.textContent = currPage;
                 totalNum.textContent = `/ ${totalPage}`;
-                circle.appendChild(pageNum);
-                circle.appendChild(totalNum);
             };
 
             input.onblur = exitInput;
@@ -241,6 +265,23 @@
         const settingsBtn = document.createElement('div');
         settingsBtn.className = 'settings-btn';
         settingsBtn.innerHTML = svgSettings;
+
+        const readerBtn = document.createElement('div');
+        readerBtn.className = 'reader-btn';
+        readerBtn.innerHTML = svgReader;
+        if (readMode === 'single') readerBtn.classList.add('visible');
+        readerBtn.onclick = (e) => {
+            e.stopPropagation();
+            openSinglePageMode();
+        };
+
+        const updateReaderButton = () => {
+            if (readMode === 'single') {
+                readerBtn.classList.add('visible');
+            } else {
+                readerBtn.classList.remove('visible');
+            }
+        };
 
         const settingsPanel = document.createElement('div');
         settingsPanel.className = 'settings-panel';
@@ -283,8 +324,43 @@
             container.classList.toggle('hidden');
         };
 
+        const readModeItem = document.createElement('div');
+        readModeItem.className = 'settings-item';
+        readModeItem.innerHTML = `
+            <span class="settings-label">Read Mode</span>
+            <div class="toggle-switch ${readMode === 'single' ? 'on' : ''}">
+                <div class="toggle-slider"></div>
+            </div>
+        `;
+        const readModeToggle = readModeItem.querySelector('.toggle-switch');
+        readModeToggle.onclick = (e) => {
+            e.stopPropagation();
+            readMode = readMode === 'scroll' ? 'single' : 'scroll';
+            GM_setValue('readMode', readMode);
+            readModeToggle.classList.toggle('on');
+            updateReaderButton();
+        };
+
+        const autoEnterItem = document.createElement('div');
+        autoEnterItem.className = 'settings-item';
+        autoEnterItem.innerHTML = `
+            <span class="settings-label">Auto Enter</span>
+            <div class="toggle-switch ${autoEnterSinglePage ? 'on' : ''}">
+                <div class="toggle-slider"></div>
+            </div>
+        `;
+        const autoEnterToggle = autoEnterItem.querySelector('.toggle-switch');
+        autoEnterToggle.onclick = (e) => {
+            e.stopPropagation();
+            autoEnterSinglePage = !autoEnterSinglePage;
+            GM_setValue('autoEnterSinglePage', autoEnterSinglePage);
+            autoEnterToggle.classList.toggle('on');
+        };
+
         settingsPanel.appendChild(autoScrollItem);
         settingsPanel.appendChild(showControlItem);
+        settingsPanel.appendChild(readModeItem);
+        settingsPanel.appendChild(autoEnterItem);
 
         settingsBtn.onclick = (e) => {
             e.stopPropagation();
@@ -297,6 +373,7 @@
             }
         });
 
+        circle.appendChild(readerBtn);
         circle.appendChild(settingsBtn);
         circle.appendChild(settingsPanel);
 
@@ -486,6 +563,181 @@
         scrollTimer = setTimeout(prefetchNextPage, 200);
     }, { passive: true });
 
+    // Single Page Mode
+    let currentImageIndex = 0;
+    let allImages = [];
+    const overlay = document.createElement('div');
+    overlay.className = 'single-page-overlay';
+
+    const closeBtn = document.createElement('div');
+    closeBtn.className = 'sp-close-btn';
+    closeBtn.innerHTML = '✕';
+
+    const pageIndicator = document.createElement('div');
+    pageIndicator.className = 'sp-scrollbar';
+
+    const scrollbarThumb = document.createElement('div');
+    scrollbarThumb.className = 'sp-scrollbar-thumb';
+
+    const scrollbarLabel = document.createElement('div');
+    scrollbarLabel.className = 'sp-scrollbar-label';
+
+    pageIndicator.appendChild(scrollbarThumb);
+    pageIndicator.appendChild(scrollbarLabel);
+
+    const imageContainer = document.createElement('div');
+    imageContainer.className = 'sp-image-container';
+
+    const currentImage = document.createElement('img');
+    currentImage.className = 'sp-current-image';
+
+    imageContainer.appendChild(currentImage);
+    overlay.appendChild(closeBtn);
+    overlay.appendChild(pageIndicator);
+    overlay.appendChild(imageContainer);
+    document.body.appendChild(overlay);
+
+    const updateSinglePageImage = () => {
+        const img = allImages[currentImageIndex];
+        if (img && img.src && !img.src.includes('data:')) {
+            currentImage.src = img.src;
+            updateScrollbar();
+        } else {
+            currentImage.src = '';
+            const loading = document.createElement('div');
+            loading.className = 'sp-loading';
+            loading.textContent = 'Loading...';
+            imageContainer.innerHTML = '';
+            imageContainer.appendChild(loading);
+
+            setTimeout(() => {
+                const img = allImages[currentImageIndex];
+                if (img && img.src && !img.src.includes('data:')) {
+                    imageContainer.innerHTML = '';
+                    currentImage.src = img.src;
+                    imageContainer.appendChild(currentImage);
+                    updateScrollbar();
+                }
+            }, 500);
+        }
+    };
+
+    const updateScrollbar = () => {
+        const progress = (currentImageIndex + 1) / allImages.length;
+        const thumbHeight = Math.max(30, (1 / allImages.length) * 100);
+        const maxTop = 100 - thumbHeight;
+        const thumbTop = progress * maxTop;
+
+        scrollbarThumb.style.height = `${thumbHeight}%`;
+        scrollbarThumb.style.top = `${thumbTop}%`;
+        scrollbarLabel.textContent = `${currentImageIndex + 1} / ${allImages.length}`;
+    };
+
+    const nextImage = () => {
+        if (currentImageIndex < allImages.length - 1) {
+            currentImageIndex++;
+            updateSinglePageImage();
+        }
+    };
+
+    const previousImage = () => {
+        if (currentImageIndex > 0) {
+            currentImageIndex--;
+            updateSinglePageImage();
+        }
+    };
+
+    const openSinglePageMode = () => {
+        allImages = Array.from(qa('.r-img'));
+        if (allImages.length === 0) {
+            alert('Please wait for images to load');
+            return;
+        }
+        overlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        updateSinglePageImage();
+    };
+
+    const closeSinglePageMode = () => {
+        overlay.classList.remove('active');
+        document.body.style.overflow = '';
+    };
+
+    closeBtn.onclick = () => {
+        closeSinglePageMode();
+    };
+
+    pageIndicator.onclick = (e) => {
+        if (e.target === scrollbarThumb) return;
+
+        const rect = pageIndicator.getBoundingClientRect();
+        const clickY = e.clientY - rect.top;
+        const percentage = clickY / rect.height;
+        const targetIndex = Math.floor(percentage * allImages.length);
+
+        if (targetIndex >= 0 && targetIndex < allImages.length) {
+            currentImageIndex = targetIndex;
+            updateSinglePageImage();
+        }
+    };
+
+    scrollbarThumb.onclick = (e) => {
+        e.stopPropagation();
+    };
+
+    let wheelTimeout;
+    let wheelDelta = 0;
+    let isScrolling = false;
+
+    overlay.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        wheelDelta += e.deltaY;
+
+        if (!isScrolling) {
+            isScrolling = true;
+            processWheelScroll();
+        }
+
+        clearTimeout(wheelTimeout);
+        wheelTimeout = setTimeout(() => {
+            isScrolling = false;
+            wheelDelta = 0;
+        }, 150);
+    }, { passive: false });
+
+    const processWheelScroll = () => {
+        if (!isScrolling) return;
+
+        const threshold = 100;
+        if (Math.abs(wheelDelta) >= threshold) {
+            if (wheelDelta > 0) {
+                nextImage();
+            } else {
+                previousImage();
+            }
+            wheelDelta = wheelDelta > 0 ? wheelDelta - threshold : wheelDelta + threshold;
+        }
+
+        if (isScrolling) {
+            requestAnimationFrame(processWheelScroll);
+        }
+    };
+
+    document.addEventListener('keydown', (e) => {
+        if (!overlay.classList.contains('active')) return;
+        if (e.key === 'Escape') {
+            closeSinglePageMode();
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            nextImage();
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+            previousImage();
+        }
+    });
+
+    if (readMode === 'single' && autoEnterSinglePage) {
+        setTimeout(() => openSinglePageMode(), 1000);
+    }
+
     GM_registerMenuCommand('Toggle Auto Scroll', () => {
         autoScroll = !autoScroll;
         GM_setValue('autoScroll', autoScroll);
@@ -497,6 +749,20 @@
         showControl = !showControl;
         GM_setValue('showControl', showControl);
         alert(`Control Display ${showControl ? 'Enabled' : 'Disabled'}`);
+        location.reload();
+    });
+
+    GM_registerMenuCommand('Toggle Read Mode', () => {
+        readMode = readMode === 'scroll' ? 'single' : 'scroll';
+        GM_setValue('readMode', readMode);
+        alert(`Read Mode: ${readMode === 'single' ? 'Single Page' : 'Scroll'}`);
+        location.reload();
+    });
+
+    GM_registerMenuCommand('Toggle Auto Enter Single Page', () => {
+        autoEnterSinglePage = !autoEnterSinglePage;
+        GM_setValue('autoEnterSinglePage', autoEnterSinglePage);
+        alert(`Auto Enter Single Page ${autoEnterSinglePage ? 'Enabled' : 'Disabled'}`);
         location.reload();
     });
 
