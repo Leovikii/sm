@@ -24,6 +24,8 @@
     let showControl = GM_getValue('showControl', true);
     let readMode = GM_getValue('readMode', 'scroll'); // 'scroll' or 'single'
     let autoEnterSinglePage = GM_getValue('autoEnterSinglePage', false);
+    let autoPlay = GM_getValue('autoPlay', false);
+    let autoPlayInterval = GM_getValue('autoPlayInterval', 3000); // 默认3秒
 
     const CFG = {
         nextPage: '3000px 0px',
@@ -76,6 +78,12 @@
         .float-control:hover .settings-panel.show, .settings-panel.show:hover{opacity:1;pointer-events:auto}
         .settings-item{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:13px;color:#ccc}
         .settings-item:last-child{margin-bottom:0}
+        .settings-item.expandable{flex-direction:column;align-items:stretch}
+        .settings-item-row{display:flex;align-items:center;justify-content:space-between;width:100%}
+        .settings-item-expand{max-height:0;overflow:hidden;transition:max-height 0.3s;margin-top:0}
+        .settings-item-expand.show{max-height:50px;margin-top:8px}
+        .interval-input{width:60px;background:#333;border:1px solid #555;border-radius:4px;color:#fff;padding:4px 8px;font-size:12px;text-align:center}
+        .interval-input:focus{outline:none;border-color:#888}
         .settings-label{margin-right:10px}
         .toggle-switch{width:40px;height:20px;background:#333;border-radius:10px;position:relative;cursor:pointer;transition:background 0.3s}
         .toggle-switch.on{background:#4CAF50}
@@ -87,13 +95,20 @@
         .sp-current-image{max-width:100%;max-height:100%;object-fit:contain;user-select:none}
         .sp-close-btn{position:absolute;top:20px;right:20px;width:40px;height:40px;background:rgba(51,51,51,0.8);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:24px;color:#fff;transition:all 0.3s;z-index:10}
         .sp-close-btn:hover{background:rgba(85,85,85,0.9);transform:scale(1.1)}
-        .sp-scrollbar{position:absolute;right:20px;top:50%;transform:translateY(-50%);width:8px;height:80%;background:rgba(51,51,51,0.5);border-radius:4px;z-index:10;cursor:pointer;transition:all 0.3s}
-        .sp-scrollbar:hover{width:12px;background:rgba(51,51,51,0.7)}
-        .sp-scrollbar-thumb{position:absolute;top:0;left:0;width:100%;background:rgba(255,255,255,0.6);border-radius:4px;transition:background 0.3s;cursor:pointer}
-        .sp-scrollbar:hover .sp-scrollbar-thumb{background:rgba(255,255,255,0.8)}
-        .sp-scrollbar-label{position:absolute;right:100%;margin-right:12px;top:50%;transform:translateY(-50%);background:rgba(26,26,26,0.9);padding:6px 12px;border-radius:6px;color:#fff;font-family:monospace;font-size:13px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.3s}
+        .sp-scrollbar{position:absolute;right:40px;top:10%;width:12px;height:80%;background:rgba(40,40,40,0.3);border-radius:6px;z-index:10;transition:background 0.3s}
+        .sp-scrollbar:hover{background:rgba(50,50,50,0.5)}
+        .sp-scrollbar-thumb{position:absolute;left:0;width:100%;min-height:60px;background:rgba(255,255,255,0.4);border-radius:6px;transition:background 0.3s;cursor:grab;user-select:none}
+        .sp-scrollbar-thumb:hover{background:rgba(255,255,255,0.6)}
+        .sp-scrollbar-thumb:active{cursor:grabbing;background:rgba(255,255,255,0.7)}
+        .sp-scrollbar-label{position:absolute;right:calc(100% + 16px);top:50%;transform:translateY(-50%);background:rgba(26,26,26,0.95);padding:8px 14px;border-radius:8px;color:#fff;font-family:monospace;font-size:14px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.3s;box-shadow:0 2px 8px rgba(0,0,0,0.3)}
         .sp-scrollbar:hover .sp-scrollbar-label{opacity:1}
         .sp-loading{color:#888;font-size:18px;font-family:sans-serif}
+        .sp-controls{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;background:rgba(26,26,26,0.95);padding:12px 20px;border-radius:8px;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.3)}
+        .sp-play-btn{width:36px;height:36px;background:rgba(51,51,51,0.8);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.3s}
+        .sp-play-btn:hover{background:rgba(85,85,85,0.9);transform:scale(1.1)}
+        .sp-play-btn svg{width:18px;height:18px;fill:#fff}
+        .sp-interval-control{display:flex;align-items:center;gap:8px;font-size:13px;color:#ccc}
+        .sp-interval-control .interval-input{width:50px}
     `;
     document.head.appendChild(style);
 
@@ -119,6 +134,8 @@
     const svgArrow = `<svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`;
     const svgSettings = `<svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>`;
     const svgReader = `<svg viewBox="0 0 24 24"><path d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"/></svg>`;
+    const svgPlay = `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+    const svgPause = `<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>`;
 
     const calcTotal = (doc, fallbackLinkCount) => {
         const gpc = q('.gpc', doc);
@@ -272,7 +289,12 @@
         if (readMode === 'single') readerBtn.classList.add('visible');
         readerBtn.onclick = (e) => {
             e.stopPropagation();
-            openSinglePageMode();
+            // 如果已经在单页模式，则退出；否则进入
+            if (overlay.classList.contains('active')) {
+                closeSinglePageMode();
+            } else {
+                openSinglePageMode();
+            }
         };
 
         const updateReaderButton = () => {
@@ -566,6 +588,7 @@
     // Single Page Mode
     let currentImageIndex = 0;
     let allImages = [];
+    let autoPlayTimer = null;
     const overlay = document.createElement('div');
     overlay.className = 'single-page-overlay';
 
@@ -592,9 +615,45 @@
     currentImage.className = 'sp-current-image';
 
     imageContainer.appendChild(currentImage);
+
+    // 创建底部控制栏
+    const controlsBar = document.createElement('div');
+    controlsBar.className = 'sp-controls';
+
+    const playBtn = document.createElement('div');
+    playBtn.className = 'sp-play-btn';
+    playBtn.innerHTML = svgPlay;
+
+    const intervalControl = document.createElement('div');
+    intervalControl.className = 'sp-interval-control';
+    intervalControl.innerHTML = `
+        <span>Interval:</span>
+        <input type="number" class="interval-input" min="1" max="60" step="0.5" value="${autoPlayInterval / 1000}" />
+        <span>s</span>
+    `;
+
+    const intervalInput = intervalControl.querySelector('.interval-input');
+    intervalInput.onclick = (e) => e.stopPropagation();
+    intervalInput.onchange = (e) => {
+        const value = parseFloat(e.target.value);
+        if (!isNaN(value) && value >= 1 && value <= 60) {
+            autoPlayInterval = value * 1000;
+            GM_setValue('autoPlayInterval', autoPlayInterval);
+            // 如果正在播放，重启定时器以应用新间隔
+            if (autoPlay) {
+                stopAutoPlay();
+                startAutoPlay();
+            }
+        }
+    };
+
+    controlsBar.appendChild(playBtn);
+    controlsBar.appendChild(intervalControl);
+
     overlay.appendChild(closeBtn);
     overlay.appendChild(pageIndicator);
     overlay.appendChild(imageContainer);
+    overlay.appendChild(controlsBar);
     document.body.appendChild(overlay);
 
     const updateSinglePageImage = () => {
@@ -623,20 +682,58 @@
     };
 
     const updateScrollbar = () => {
-        const progress = (currentImageIndex + 1) / allImages.length;
-        const thumbHeight = Math.max(30, (1 / allImages.length) * 100);
-        const maxTop = 100 - thumbHeight;
-        const thumbTop = progress * maxTop;
+        if (allImages.length === 0) return;
 
-        scrollbarThumb.style.height = `${thumbHeight}%`;
-        scrollbarThumb.style.top = `${thumbTop}%`;
+        // 计算滑块高度：根据图片数量动态调整
+        // 使用更合理的比例，让滑块在少量图片时也不会太长
+        const trackHeight = pageIndicator.offsetHeight;
+        let thumbHeight;
+
+        if (allImages.length <= 10) {
+            // 10张以内：固定最小高度
+            thumbHeight = 60;
+        } else if (allImages.length <= 50) {
+            // 10-50张：线性缩小
+            thumbHeight = Math.max(60, trackHeight * (10 / allImages.length));
+        } else {
+            // 50张以上：更小的比例
+            thumbHeight = Math.max(60, trackHeight * (5 / allImages.length));
+        }
+
+        // 计算滑块位置：确保第一张图片时滑块在顶部，最后一张在底部
+        const scrollProgress = currentImageIndex / Math.max(1, allImages.length - 1);
+        const maxThumbTop = trackHeight - thumbHeight;
+        const thumbTop = scrollProgress * maxThumbTop;
+
+        scrollbarThumb.style.height = `${thumbHeight}px`;
+        scrollbarThumb.style.top = `${thumbTop}px`;
         scrollbarLabel.textContent = `${currentImageIndex + 1} / ${allImages.length}`;
     };
 
     const nextImage = () => {
         if (currentImageIndex < allImages.length - 1) {
+            // 检查下一张图片是否已加载
+            const nextImg = allImages[currentImageIndex + 1];
+            if (nextImg && (!nextImg.src || nextImg.src.includes('data:'))) {
+                // 图片未加载完成，显示提示但不切换
+                console.log('[Single Page] Next image not loaded yet, waiting...');
+                return;
+            }
+
             currentImageIndex++;
             updateSinglePageImage();
+
+            // 检查是否需要自动加载下一页（接近末尾时）
+            checkAndLoadNextPage();
+        } else {
+            // 到达最后一张图片时停止自动播放
+            if (autoPlay) {
+                autoPlay = false;
+                GM_setValue('autoPlay', false);
+                stopAutoPlay();
+                playBtn.innerHTML = svgPlay;
+                console.log('[Auto Play] Reached last image, stopped');
+            }
         }
     };
 
@@ -644,6 +741,97 @@
         if (currentImageIndex > 0) {
             currentImageIndex--;
             updateSinglePageImage();
+            // 用户手动操作时重置自动播放
+            if (autoPlay) {
+                stopAutoPlay();
+                startAutoPlay();
+            }
+        }
+    };
+
+    // 单页模式下检查并自动加载下一页
+    const checkAndLoadNextPage = () => {
+        if (!autoScroll || !nextUrl || isFetching) return;
+
+        // 当浏览到倒数第10张图片时，提前自动加载下一页
+        const remainingImages = allImages.length - currentImageIndex;
+        if (remainingImages <= 10) {
+            console.log(`[Single Page] Near end (${remainingImages} remaining), loading next page`);
+
+            isFetching = true;
+            fetch(nextUrl).then(r => r.text()).then(html => {
+                const doc = parser.parseFromString(html, 'text/html');
+                const links = Array.from(qa('#gdt a', doc)).map(a => a.href);
+                const nUrl = getNextUrl(doc);
+
+                currPage++;
+                processBatch(links, currPage);
+
+                // 更新滚动模式的控制器
+                floatControl.pageNum.textContent = currPage;
+                floatControl.updateArrows();
+
+                // 实时更新图片列表，不需要延迟
+                // 使用 MutationObserver 监听新图片的添加
+                const updateImageList = () => {
+                    const newImages = Array.from(qa('.r-img'));
+                    if (newImages.length > allImages.length) {
+                        allImages = newImages;
+                        updateScrollbar();
+                        console.log(`[Single Page] Updated image list, now ${allImages.length} images`);
+                    }
+                };
+
+                // 立即更新一次
+                setTimeout(updateImageList, 500);
+                // 再次更新确保完整
+                setTimeout(updateImageList, 1500);
+
+                nextUrl = nUrl;
+                isFetching = false;
+                nextPagePrefetched = false;
+                if (!nextUrl) {
+                    console.log('[Single Page] No more pages to load');
+                }
+            }).catch((err) => {
+                console.error('[Single Page] Load failed', err);
+                isFetching = false;
+            });
+        }
+    };
+
+    const startAutoPlay = () => {
+        if (autoPlayTimer) {
+            clearInterval(autoPlayTimer);
+        }
+        if (autoPlay) {
+            autoPlayTimer = setInterval(() => {
+                nextImage();
+            }, autoPlayInterval);
+            console.log(`[Auto Play] Started with ${autoPlayInterval}ms interval`);
+        }
+    };
+
+    const stopAutoPlay = () => {
+        if (autoPlayTimer) {
+            clearInterval(autoPlayTimer);
+            autoPlayTimer = null;
+            console.log('[Auto Play] Stopped');
+        }
+    };
+
+    // 播放按钮点击事件
+    playBtn.onclick = (e) => {
+        e.stopPropagation();
+        autoPlay = !autoPlay;
+        GM_setValue('autoPlay', autoPlay);
+
+        if (autoPlay) {
+            playBtn.innerHTML = svgPause;
+            startAutoPlay();
+        } else {
+            playBtn.innerHTML = svgPlay;
+            stopAutoPlay();
         }
     };
 
@@ -653,14 +841,66 @@
             alert('Please wait for images to load');
             return;
         }
+
+        // 查找视口中心最近的图片（性能优化：只检查视口附近）
+        const viewportCenter = window.scrollY + window.innerHeight / 2;
+        const searchRange = window.innerHeight * 2; // 搜索范围：上下各1屏
+
+        let closestIndex = 0;
+        let minDistance = Infinity;
+
+        allImages.forEach((img, index) => {
+            const rect = img.getBoundingClientRect();
+            const imgTop = rect.top + window.scrollY;
+
+            // 只检查视口附近的图片，避免遍历所有图片
+            if (Math.abs(imgTop - viewportCenter) < searchRange) {
+                const imgCenter = imgTop + rect.height / 2;
+                const distance = Math.abs(imgCenter - viewportCenter);
+
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestIndex = index;
+                }
+            }
+        });
+
+        currentImageIndex = closestIndex;
         overlay.classList.add('active');
         document.body.style.overflow = 'hidden';
         updateSinglePageImage();
+
+        // 根据autoPlay状态设置按钮图标
+        if (autoPlay) {
+            playBtn.innerHTML = svgPause;
+            startAutoPlay();
+        } else {
+            playBtn.innerHTML = svgPlay;
+        }
     };
 
     const closeSinglePageMode = () => {
+        stopAutoPlay();
         overlay.classList.remove('active');
         document.body.style.overflow = '';
+
+        // 退出时滚动到当前查看的图片位置
+        // 重新获取图片列表（自动翻页可能已增加图片）
+        const currentImages = Array.from(qa('.r-img'));
+
+        // 验证索引有效性
+        if (currentImageIndex >= 0 && currentImageIndex < currentImages.length) {
+            const targetImg = currentImages[currentImageIndex];
+            if (targetImg) {
+                // 延迟执行，确保 overlay 已完全关闭，避免滚动冲突
+                setTimeout(() => {
+                    targetImg.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'center'
+                    });
+                }, 100);
+            }
+        }
     };
 
     closeBtn.onclick = () => {
@@ -672,14 +912,68 @@
 
         const rect = pageIndicator.getBoundingClientRect();
         const clickY = e.clientY - rect.top;
-        const percentage = clickY / rect.height;
-        const targetIndex = Math.floor(percentage * allImages.length);
+        const trackHeight = rect.height;
+
+        // 计算点击位置对应的图片索引
+        const scrollProgress = Math.min(1, Math.max(0, clickY / trackHeight));
+        const targetIndex = Math.round(scrollProgress * (allImages.length - 1));
 
         if (targetIndex >= 0 && targetIndex < allImages.length) {
             currentImageIndex = targetIndex;
             updateSinglePageImage();
+            // 用户手动操作时重置自动播放
+            if (autoPlay) {
+                stopAutoPlay();
+                startAutoPlay();
+            }
         }
     };
+
+    // 拖动功能
+    let isDragging = false;
+    let dragStartY = 0;
+    let thumbStartTop = 0;
+
+    scrollbarThumb.onmousedown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isDragging = true;
+        dragStartY = e.clientY;
+        thumbStartTop = scrollbarThumb.offsetTop;
+        document.body.style.userSelect = 'none';
+    };
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const deltaY = e.clientY - dragStartY;
+        const newTop = thumbStartTop + deltaY;
+        const trackHeight = pageIndicator.offsetHeight;
+        const thumbHeight = scrollbarThumb.offsetHeight;
+        const maxTop = trackHeight - thumbHeight;
+
+        // 限制滑块在轨道范围内
+        const clampedTop = Math.max(0, Math.min(maxTop, newTop));
+        const scrollProgress = maxTop > 0 ? clampedTop / maxTop : 0;
+        const targetIndex = Math.round(scrollProgress * (allImages.length - 1));
+
+        if (targetIndex >= 0 && targetIndex < allImages.length && targetIndex !== currentImageIndex) {
+            currentImageIndex = targetIndex;
+            updateSinglePageImage();
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            document.body.style.userSelect = '';
+            // 拖动结束时重置自动播放
+            if (autoPlay) {
+                stopAutoPlay();
+                startAutoPlay();
+            }
+        }
+    });
 
     scrollbarThumb.onclick = (e) => {
         e.stopPropagation();
