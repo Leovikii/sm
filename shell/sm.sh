@@ -1,7 +1,9 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
+SCRIPT_VERSION="2.0.0"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
+SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
 DEFAULT_CONFIG_URL="https://example.com/config.json"
 TCPX_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcpx.sh"
@@ -223,6 +225,48 @@ manage_service_menu() {
     done
 }
 
+update_script() {
+    log_info "正在检查脚本更新..."
+    mkdir -p "$TMP_DIR"
+    local temp_script="$TMP_DIR/new_sm.sh"
+    
+    if download_file "$SCRIPT_UPDATE_URL" "$temp_script"; then
+        local remote_version
+        remote_version=$(grep "^SCRIPT_VERSION=" "$temp_script" | head -n 1 | cut -d'"' -f2)
+        
+        if [[ -z "$remote_version" ]]; then
+            log_err "获取远程版本失败，已取消更新。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+
+        if [[ "$SCRIPT_VERSION" == "$remote_version" ]]; then
+            log_info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
+        else
+            log_info "发现新版本: ${GREEN}v${remote_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
+            read -r -p "是否更新管理脚本? (y/N): " confirm_update
+            if [[ "$confirm_update" == "y" || "$confirm_update" == "Y" ]]; then
+                local old_url
+                old_url=$(grep "^DEFAULT_CONFIG_URL=" "$INSTALL_PATH" | head -n 1 | cut -d'"' -f2)
+                if [[ -n "$old_url" ]]; then
+                    sed -i "s|^DEFAULT_CONFIG_URL=.*|DEFAULT_CONFIG_URL=\"$old_url\"|" "$temp_script"
+                fi
+                
+                chmod +x "$temp_script"
+                mv -f "$temp_script" "$INSTALL_PATH"
+                log_info "脚本更新成功！正在重新加载..."
+                sleep 1
+                exec "$INSTALL_PATH" "$@"
+            else
+                log_info "已取消更新。"
+            fi
+        fi
+    else
+        log_err "检查更新失败，请检查网络连接。"
+    fi
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
 uninstall_script() {
     echo -e "\n${RED}⚠️  正在进行卸载程序...${PLAIN}"
     
@@ -258,7 +302,7 @@ show_menu() {
     fi
     
     echo -e "┌──────────────────────────────────────────────┐"
-    echo -e "│             ${BLUE}Sing-box 管理脚本${PLAIN}                │"
+    echo -e "│          ${BLUE}Sing-box 管理脚本 v${SCRIPT_VERSION}${PLAIN}              │"
     echo -e "│             ${YELLOW}Debian/Ubuntu 专用${PLAIN}               │"
     echo -e "└──────────────────────────────────────────────┘"
     echo -e " 系统运行时间: ${uptime_str}"
@@ -273,7 +317,9 @@ show_menu() {
     echo -e "────────────────────────────────────────────────"
     echo -e "  ${GREEN}6.${PLAIN} 安装 UFW 防火墙 (安全推荐)"
     echo -e "  ${GREEN}7.${PLAIN} 系统 TCP 网络优化"
-    echo -e "  ${GREEN}8.${PLAIN} 卸载脚本 (可选卸载 Sing-box)"
+    echo -e "────────────────────────────────────────────────"
+    echo -e "  ${GREEN}8.${PLAIN} 检查并更新管理脚本"
+    echo -e "  ${GREEN}9.${PLAIN} 卸载脚本 (可选卸载 Sing-box)"
     echo -e "  ${GREEN}0.${PLAIN} 退出"
     echo -e "────────────────────────────────────────────────"
     echo -e " 快捷指令: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
@@ -288,7 +334,7 @@ main() {
     
     while true; do
         show_menu
-        read -r -p " 请输入选项 [0-8]: " opt
+        read -r -p " 请输入选项 [0-9]: " opt
         case "$opt" in
             1) install_singbox ;;
             2) manage_service_menu ;;
@@ -300,11 +346,12 @@ main() {
             5) set_default_config_url ;;
             6) run_ufw_script ;;
             7) run_tcp_script ;;
-            8) uninstall_script ;;
+            8) update_script ;;
+            9) uninstall_script ;;
             0) exit 0 ;;
             *) log_err "无效选项，请重新输入" ;;
         esac
-        read -n 1 -s -r -p "按任意键返回菜单..."
+        [[ "$opt" != "8" ]] && read -n 1 -s -r -p "按任意键返回菜单..."
     done
 }
 
