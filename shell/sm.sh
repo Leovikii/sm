@@ -302,8 +302,8 @@ show_menu() {
     fi
     
     echo -e "┌──────────────────────────────────────────────┐"
-    echo -e "│          ${BLUE}Sing-box 管理脚本 v${SCRIPT_VERSION}${PLAIN}              │"
-    echo -e "│             ${YELLOW}Debian/Ubuntu 专用${PLAIN}               │"
+    echo -e "│              ${BLUE}Sing-box 管理脚本${PLAIN}               │"
+    echo -e "│                ${GREEN}版本: v${SCRIPT_VERSION}${PLAIN}                 │"
     echo -e "└──────────────────────────────────────────────┘"
     echo -e " 系统运行时间: ${uptime_str}"
     echo -e " Sing-box版本: ${BLUE}${version}${PLAIN}"
