@@ -229,8 +229,7 @@
         "final": "MR",
         "default_domain_resolver": {
             "server": "dns_direct"
-        },
-        "auto_detect_interface": true
+        }
     },
     "experimental": {
         "cache_file": {
