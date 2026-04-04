@@ -3,7 +3,9 @@
   "rules": [
     {
       "domain": [
-        "dcg.microsoft.com"
+        "dcg.microsoft.com",
+        "v6.la.vkio.org",
+        "eb.la.vkio.org"
       ],
       "domain_suffix": [
         "0793wn.com",
