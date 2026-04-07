@@ -1,6 +1,6 @@
 {
     "log": {
-        "level": "waring",
+        "level": "warning",
         "timestamp": true
     },
     "dns": {
