@@ -139,7 +139,13 @@
     "route": {
         "rules": [
             {
-                "action": "sniff"
+                "action": "sniff",
+                "sniffer": [
+                    "http",
+                    "tls",
+                    "quic",
+                    "dns"
+                ]
             },
             {
                 "inbound": "dns-in",
