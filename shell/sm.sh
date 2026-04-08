@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.0.2"
+SCRIPT_VERSION="2.0.3"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -16,11 +16,12 @@ BLUE='\033[34m'
 PLAIN='\033[0m'
 
 TMP_DIR="/tmp/sm_manager_tmp_$$"
+_DEPS_CHECKED=0
 
 cleanup() { rm -rf "$TMP_DIR"; }
 
 trap cleanup EXIT
-trap 'cleanup; echo -e "\n${YELLOW}[WARN]${PLAIN} 已接收到中断信号，脚本退出。"; exit 130' INT TERM
+trap 'echo -e "\n${YELLOW}[WARN]${PLAIN} 接收到退出指令，脚本终止。"; exit 130' INT TERM HUP
 
 log_info() { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
@@ -35,8 +36,8 @@ check_os() {
         source /etc/os-release
         if [[ "$ID" != "debian" && "$ID" != "ubuntu" && "$ID_LIKE" != *"debian"* ]]; then
              log_warn "本脚本专为 Debian/Ubuntu 设计，检测到当前系统为: $ID"
-             read -r -p "是否强制继续? (y/N): " force
-             [[ "$force" != "y" && "$force" != "Y" ]] && exit 1
+             read -r -p "是否强制继续? (y/N): " force || exit 130
+             [[ "${force,,}" != "y" ]] && exit 1
         fi
     else
         log_err "无法检测系统版本，仅支持 Debian/Ubuntu 标准发行版。"
@@ -45,6 +46,7 @@ check_os() {
 }
 
 install_dependencies() {
+    [[ $_DEPS_CHECKED -eq 1 ]] && return
     local deps="curl wget jq tar ca-certificates gnupg"
     local missing=""
     for dep in $deps; do
@@ -54,6 +56,16 @@ install_dependencies() {
         log_info "正在安装必要依赖: $missing"
         apt-get update -y >/dev/null 2>&1
         apt-get install -y $missing >/dev/null 2>&1
+    fi
+    _DEPS_CHECKED=1
+}
+
+fetch_text() {
+    local url="$1"
+    if command -v curl &>/dev/null; then
+        curl -k -f -L --retry 2 --connect-timeout 5 -s "$url"
+    else
+        wget --no-check-certificate -q -O- -T 5 -t 2 "$url"
     fi
 }
 
@@ -101,11 +113,7 @@ install_singbox() {
     log_info "准备安装/更新 Sing-box (使用官方稳定源)..."
     
     mkdir -p /etc/apt/keyrings
-    if command -v curl &>/dev/null; then
-        curl -fsSL https://sing-box.app/gpg.key -o /etc/apt/keyrings/sagernet.asc
-    else
-        wget -qO- https://sing-box.app/gpg.key > /etc/apt/keyrings/sagernet.asc
-    fi
+    fetch_text "https://sing-box.app/gpg.key" > /etc/apt/keyrings/sagernet.asc
     chmod a+r /etc/apt/keyrings/sagernet.asc
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" | \
@@ -149,8 +157,8 @@ update_config() {
             mkdir -p /etc/sing-box
             mv "$tmp_conf" /etc/sing-box/config.json
             log_info "配置文件验证通过并已应用。"
-            read -r -p "是否重启 Sing-box 服务? (y/N): " restart_opt
-            [[ "$restart_opt" == "y" || "$restart_opt" == "Y" ]] && systemctl restart sing-box && log_info "服务已重启。"
+            read -r -p "是否重启 Sing-box 服务? (y/N): " restart_opt || exit 130
+            [[ "${restart_opt,,}" == "y" ]] && systemctl restart sing-box && log_info "服务已重启。"
         else
             log_err "下载的文件不是有效的 JSON 格式或内容为空，操作已取消。"
         fi
@@ -160,7 +168,7 @@ update_config() {
 }
 
 set_default_config_url() {
-    read -e -r -p "请输入新的默认配置下载链接: " new_url
+    read -e -r -p "请输入新的默认配置下载链接: " new_url || exit 130
     if [[ -n "$new_url" ]]; then
         sed -i "s|^DEFAULT_CONFIG_URL=.*|DEFAULT_CONFIG_URL=\"$new_url\"|" "$INSTALL_PATH"
         DEFAULT_CONFIG_URL="$new_url"
@@ -214,20 +222,21 @@ manage_service_menu() {
         echo -e "  ${GREEN}5.${PLAIN} 卸载 Sing-box"
         echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
         echo
-        read -r -p " 请选择: " sub_opt
+        read -r -p " 请选择: " sub_opt || exit 130
         case "$sub_opt" in
+            *$'\x03'*|*^C*) exit 130 ;;
             1) systemctl start sing-box && log_info "已启动";;
             2) systemctl stop sing-box && log_info "已停止";;
             3) systemctl restart sing-box && log_info "已重启";;
             4) journalctl -u sing-box -f -o cat;;
             5) 
-                read -r -p "确定要彻底卸载 Sing-box 吗? (y/N): " un_opt
-                [[ "$un_opt" == "y" || "$un_opt" == "Y" ]] && do_uninstall_singbox
+                read -r -p "确定要彻底卸载 Sing-box 吗? (y/N): " un_opt || exit 130
+                [[ "${un_opt,,}" == "y" ]] && do_uninstall_singbox
                 ;;
             0) break;;
             *) log_err "无效选项";;
         esac
-        [[ "$sub_opt" != "4" && "$sub_opt" != "0" ]] && read -n 1 -s -r -p "按任意键继续..."
+        [[ "$sub_opt" != "4" && "$sub_opt" != "0" ]] && { read -n 1 -s -r -p "按任意键继续..." || exit 130; }
     done
 }
 
@@ -235,12 +244,8 @@ update_script() {
     install_dependencies
     log_info "正在检查脚本更新..."
     
-    local remote_version=""
-    if command -v curl &>/dev/null; then
-        remote_version=$(curl -sL --connect-timeout 5 "$SCRIPT_UPDATE_URL" | grep "^SCRIPT_VERSION=" | head -n 1 | cut -d'"' -f2)
-    else
-        remote_version=$(wget -qO- --timeout=5 "$SCRIPT_UPDATE_URL" | grep "^SCRIPT_VERSION=" | head -n 1 | cut -d'"' -f2)
-    fi
+    local remote_version
+    remote_version=$(fetch_text "$SCRIPT_UPDATE_URL" | grep "^SCRIPT_VERSION=" | head -n 1 | cut -d'"' -f2)
 
     if [[ -z "$remote_version" ]]; then
         log_err "获取远程版本失败，请检查网络连接。"
@@ -248,8 +253,8 @@ update_script() {
         log_info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
     else
         log_info "发现新版本: ${GREEN}v${remote_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
-        read -r -p "是否更新管理脚本? (y/N): " confirm_update
-        if [[ "$confirm_update" == "y" || "$confirm_update" == "Y" ]]; then
+        read -r -p "是否更新管理脚本? (y/N): " confirm_update || exit 130
+        if [[ "${confirm_update,,}" == "y" ]]; then
             mkdir -p "$TMP_DIR"
             local temp_script="$TMP_DIR/new_sm.sh"
             log_info "正在下载新版本..."
@@ -277,16 +282,16 @@ uninstall_script() {
     echo -e "\n${RED}⚠️  正在进行卸载程序...${PLAIN}"
     
     echo -e "是否同时卸载 ${BLUE}Sing-box${PLAIN} 软件及其所有配置文件？"
-    read -r -p "请输入 (y/N): " uninstall_sb
-    if [[ "$uninstall_sb" == "y" || "$uninstall_sb" == "Y" ]]; then
+    read -r -p "请输入 (y/N): " uninstall_sb || exit 130
+    if [[ "${uninstall_sb,,}" == "y" ]]; then
         do_uninstall_singbox
     else
         log_info "已保留 Sing-box 软件及配置。"
     fi
 
     echo -e "\n是否删除 ${BLUE}本管理脚本 ($SCRIPT_NAME)${PLAIN} 及清理缓存文件？"
-    read -r -p "请输入 (y/N): " uninstall_self
-    if [[ "$uninstall_self" == "y" || "$uninstall_self" == "Y" ]]; then
+    read -r -p "请输入 (y/N): " uninstall_self || exit 130
+    if [[ "${uninstall_self,,}" == "y" ]]; then
         if [[ -f "$INSTALL_PATH" ]]; then
             rm -f "$INSTALL_PATH"
             log_info "脚本文件已删除: $INSTALL_PATH"
@@ -339,13 +344,14 @@ main() {
     
     while true; do
         show_menu
-        read -r -p " 请输入选项 [0-9]: " opt
+        read -r -p " 请输入选项 [0-9]: " opt || exit 130
         case "$opt" in
+            *$'\x03'*|*^C*) exit 130 ;;
             1) install_singbox ;;
             2) manage_service_menu ;;
             3) update_config "$DEFAULT_CONFIG_URL" ;;
             4) 
-                read -e -r -p "请输入配置链接: " custom_url
+                read -e -r -p "请输入配置链接: " custom_url || exit 130
                 [[ -n "$custom_url" ]] && update_config "$custom_url"
                 ;;
             5) set_default_config_url ;;
@@ -356,7 +362,7 @@ main() {
             0) exit 0 ;;
             *) log_err "无效选项，请重新输入" ;;
         esac
-        [[ "$opt" != "8" ]] && read -n 1 -s -r -p "按任意键返回菜单..."
+        [[ "$opt" != "8" ]] && { read -n 1 -s -r -p "按任意键返回菜单..." || exit 130; }
     done
 }
 
