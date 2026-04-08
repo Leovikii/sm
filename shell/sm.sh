@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.0.1"
+SCRIPT_VERSION="2.0.2"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -18,7 +18,9 @@ PLAIN='\033[0m'
 TMP_DIR="/tmp/sm_manager_tmp_$$"
 
 cleanup() { rm -rf "$TMP_DIR"; }
-trap cleanup EXIT SIGINT SIGTERM
+
+trap cleanup EXIT
+trap 'cleanup; echo -e "\n${YELLOW}[WARN]${PLAIN} 已接收到中断信号，脚本退出。"; exit 130' INT TERM
 
 log_info() { echo -e "${GREEN}[INFO]${PLAIN} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${PLAIN} $1"; }
@@ -208,7 +210,7 @@ manage_service_menu() {
         echo -e "  ${GREEN}1.${PLAIN} 启动服务"
         echo -e "  ${GREEN}2.${PLAIN} 停止服务"
         echo -e "  ${GREEN}3.${PLAIN} 重启服务"
-        echo -e "  ${GREEN}4.${PLAIN} 查看实时日志 (Ctrl+C 退出)"
+        echo -e "  ${GREEN}4.${PLAIN} 查看实时日志 (Ctrl+C 退出整个脚本)"
         echo -e "  ${GREEN}5.${PLAIN} 卸载 Sing-box"
         echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
         echo
