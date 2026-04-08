@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.0.1"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -49,7 +49,7 @@ install_dependencies() {
         if ! command -v "$dep" &>/dev/null; then missing="$missing $dep"; fi
     done
     if [[ -n "$missing" ]]; then
-        log_info "正在安装必要依赖..."
+        log_info "正在安装必要依赖: $missing"
         apt-get update -y >/dev/null 2>&1
         apt-get install -y $missing >/dev/null 2>&1
     fi
@@ -95,6 +95,7 @@ get_sb_version() {
 }
 
 install_singbox() {
+    install_dependencies
     log_info "准备安装/更新 Sing-box (使用官方稳定源)..."
     
     mkdir -p /etc/apt/keyrings
@@ -135,6 +136,7 @@ do_uninstall_singbox() {
 }
 
 update_config() {
+    install_dependencies
     local url="${1:-$DEFAULT_CONFIG_URL}"
     mkdir -p "$TMP_DIR"
     local tmp_conf="$TMP_DIR/config.json"
@@ -167,6 +169,7 @@ set_default_config_url() {
 }
 
 run_ufw_script() {
+    install_dependencies
     mkdir -p "$TMP_DIR"
     local ufw_local="$TMP_DIR/install_ufw.sh"
     
@@ -181,6 +184,7 @@ run_ufw_script() {
 }
 
 run_tcp_script() {
+    install_dependencies
     mkdir -p "$TMP_DIR"
     local tcp_local="$TMP_DIR/install_tcp.sh"
     
@@ -226,45 +230,45 @@ manage_service_menu() {
 }
 
 update_script() {
+    install_dependencies
     log_info "正在检查脚本更新..."
-    mkdir -p "$TMP_DIR"
-    local temp_script="$TMP_DIR/new_sm.sh"
     
-    if download_file "$SCRIPT_UPDATE_URL" "$temp_script"; then
-        local remote_version
-        remote_version=$(grep "^SCRIPT_VERSION=" "$temp_script" | head -n 1 | cut -d'"' -f2)
-        
-        if [[ -z "$remote_version" ]]; then
-            log_err "获取远程版本失败，已取消更新。"
-            read -n 1 -s -r -p "按任意键继续..."
-            return
-        fi
+    local remote_version=""
+    if command -v curl &>/dev/null; then
+        remote_version=$(curl -sL --connect-timeout 5 "$SCRIPT_UPDATE_URL" | grep "^SCRIPT_VERSION=" | head -n 1 | cut -d'"' -f2)
+    else
+        remote_version=$(wget -qO- --timeout=5 "$SCRIPT_UPDATE_URL" | grep "^SCRIPT_VERSION=" | head -n 1 | cut -d'"' -f2)
+    fi
 
-        if [[ "$SCRIPT_VERSION" == "$remote_version" ]]; then
-            log_info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
-        else
-            log_info "发现新版本: ${GREEN}v${remote_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
-            read -r -p "是否更新管理脚本? (y/N): " confirm_update
-            if [[ "$confirm_update" == "y" || "$confirm_update" == "Y" ]]; then
+    if [[ -z "$remote_version" ]]; then
+        log_err "获取远程版本失败，请检查网络连接。"
+    elif [[ "$SCRIPT_VERSION" == "$remote_version" ]]; then
+        log_info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
+    else
+        log_info "发现新版本: ${GREEN}v${remote_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
+        read -r -p "是否更新管理脚本? (y/N): " confirm_update
+        if [[ "$confirm_update" == "y" || "$confirm_update" == "Y" ]]; then
+            mkdir -p "$TMP_DIR"
+            local temp_script="$TMP_DIR/new_sm.sh"
+            log_info "正在下载新版本..."
+            if download_file "$SCRIPT_UPDATE_URL" "$temp_script"; then
                 local old_url
                 old_url=$(grep "^DEFAULT_CONFIG_URL=" "$INSTALL_PATH" | head -n 1 | cut -d'"' -f2)
                 if [[ -n "$old_url" ]]; then
                     sed -i "s|^DEFAULT_CONFIG_URL=.*|DEFAULT_CONFIG_URL=\"$old_url\"|" "$temp_script"
                 fi
-                
                 chmod +x "$temp_script"
                 mv -f "$temp_script" "$INSTALL_PATH"
                 log_info "脚本更新成功！正在重新加载..."
                 sleep 1
                 exec "$INSTALL_PATH" "$@"
             else
-                log_info "已取消更新。"
+                log_err "下载新版本文件失败。"
             fi
+        else
+            log_info "已取消更新。"
         fi
-    else
-        log_err "检查更新失败，请检查网络连接。"
     fi
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
 uninstall_script() {
@@ -329,7 +333,6 @@ show_menu() {
 main() {
     check_root
     check_os
-    install_dependencies
     self_install_and_cleanup "$@"
     
     while true; do
