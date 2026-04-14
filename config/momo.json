@@ -57,7 +57,8 @@
             }
         ],
         "final": "dns_proxy",
-        "independent_cache": true
+        "independent_cache": true,
+        "reverse_mapping": true
     },
     "inbounds": [
         {
