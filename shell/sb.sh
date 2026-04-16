@@ -88,9 +88,9 @@ download_file_robust() {
         _log "尝试下载通道: ${BLUE}${mirror_name}${PLAIN}"
         
         if command -v curl &>/dev/null; then
-            curl -k -L -f --retry 2 --connect-timeout 10 --max-time 60 -s -o "$save_path" "$final_url"
+            curl -k -L -f --retry 2 --connect-timeout 10 --max-time 60 -s -A "sing-box/1.0" -o "$save_path" "$final_url"
         else
-            wget --no-check-certificate -q -T 15 -t 2 -O "$save_path" "$final_url"
+            wget --no-check-certificate -q -T 15 -t 2 --user-agent="sing-box/1.0" -O "$save_path" "$final_url"
         fi
 
         if [[ -s "$save_path" ]]; then
@@ -276,9 +276,9 @@ update_config() {
     
     _log "正在下载配置文件..."
     if command -v curl &>/dev/null; then
-        curl -L -s --retry 3 --retry-delay 2 --connect-timeout 15 -o "$tmp_conf" "$url"
+        curl -L -s --retry 3 --retry-delay 2 --connect-timeout 15 -A "sing-box/1.0" -o "$tmp_conf" "$url"
     else
-        wget -q -t 3 -T 15 -O "$tmp_conf" "$url"
+        wget -q -t 3 -T 15 --user-agent="sing-box/1.0" -O "$tmp_conf" "$url"
     fi
 
     if [[ ! -s "$tmp_conf" ]]; then

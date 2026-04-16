@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.0.3"
+SCRIPT_VERSION="2.0.4"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -63,9 +63,9 @@ install_dependencies() {
 fetch_text() {
     local url="$1"
     if command -v curl &>/dev/null; then
-        curl -k -f -L --retry 2 --connect-timeout 5 -s "$url"
+        curl -k -f -L --retry 2 --connect-timeout 5 -s -A "sing-box/1.0" "$url"
     else
-        wget --no-check-certificate -q -O- -T 5 -t 2 "$url"
+        wget --no-check-certificate -q -O- -T 5 -t 2 --user-agent="sing-box/1.0" "$url"
     fi
 }
 
@@ -73,9 +73,9 @@ download_file() {
     local url="$1"
     local dest="$2"
     if command -v curl &>/dev/null; then
-        curl -k -f -L --retry 3 --connect-timeout 10 -s -o "$dest" "$url"
+        curl -k -f -L --retry 3 --connect-timeout 10 -s -A "sing-box/1.0" -o "$dest" "$url"
     else
-        wget --no-check-certificate -q -T 15 -t 3 -O "$dest" "$url"
+        wget --no-check-certificate -q -T 15 -t 3 --user-agent="sing-box/1.0" -O "$dest" "$url"
     fi
 }
 
