@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.0.4"
+SCRIPT_VERSION="2.1.0"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -197,7 +197,7 @@ run_tcp_script() {
     install_dependencies
     mkdir -p "$TMP_DIR"
     local tcp_local="$TMP_DIR/install_tcp.sh"
-    
+
     log_info "正在下载 TCP 优化脚本..."
     if download_file "$TCPX_URL" "$tcp_local"; then
         chmod +x "$tcp_local"
@@ -205,6 +205,146 @@ run_tcp_script() {
     else
         log_err "TCP 脚本下载失败。"
     fi
+}
+
+system_full_upgrade() {
+    log_info "准备执行系统全量升级 (full-upgrade)..."
+    log_warn "该操作会升级内核及所有依赖发生变化的软件包，建议升级后重启。"
+    read -r -p "确认继续? (y/N): " confirm || exit 130
+    [[ "${confirm,,}" != "y" ]] && { log_info "已取消。"; return; }
+
+    export DEBIAN_FRONTEND=noninteractive
+    local apt_opts='-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef'
+
+    log_info "[1/3] 更新软件源索引..."
+    if ! apt-get update -y; then
+        log_err "apt-get update 失败，请检查软件源。"
+        return
+    fi
+
+    log_info "[2/3] 执行 full-upgrade (包含内核升级)..."
+    if ! apt-get $apt_opts -y full-upgrade; then
+        log_err "full-upgrade 执行失败。"
+        return
+    fi
+
+    log_info "[3/3] 清理无用依赖..."
+    apt-get $apt_opts -y autoremove --purge
+    apt-get clean
+
+    if [[ -f /var/run/reboot-required ]]; then
+        log_warn "系统提示需要重启以应用新内核 (常见于 root 提权漏洞修复)。"
+        read -r -p "是否立即重启? (y/N): " reboot_opt || exit 130
+        if [[ "${reboot_opt,,}" == "y" ]]; then
+            log_info "系统将在 3 秒后重启..."
+            sleep 3
+            reboot
+        else
+            log_info "请稍后手动执行 reboot 完成内核切换。"
+        fi
+    else
+        log_info "升级完成，当前无需重启。"
+    fi
+}
+
+install_caddy() {
+    install_dependencies
+    log_info "准备安装 Caddy (使用 cloudsmith 官方源)..."
+
+    mkdir -p /etc/apt/keyrings
+    fetch_text "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" \
+        | gpg --dearmor --yes -o /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
+    chmod a+r /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
+
+    fetch_text "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" \
+        | sed 's|^deb |deb [signed-by=/etc/apt/keyrings/caddy-stable-archive-keyring.gpg] |; s|^deb-src |deb-src [signed-by=/etc/apt/keyrings/caddy-stable-archive-keyring.gpg] |' \
+        > /etc/apt/sources.list.d/caddy-stable.list
+
+    apt-get update >/dev/null 2>&1
+    if apt-get install -y caddy; then
+        systemctl enable caddy >/dev/null 2>&1
+        systemctl start caddy
+        if systemctl is-active --quiet caddy; then
+            log_info "Caddy 安装成功并已启动 (配置: /etc/caddy/Caddyfile)"
+        else
+            log_warn "Caddy 已安装但启动失败，请检查 journalctl -u caddy"
+        fi
+    else
+        log_err "Caddy 安装失败，请检查网络或源是否可用。"
+    fi
+}
+
+install_docker() {
+    install_dependencies
+    log_info "准备安装 Docker CE + Compose 插件 (使用 docker.com 官方源)..."
+
+    if command -v docker &>/dev/null; then
+        log_warn "检测到已安装: $(docker --version 2>/dev/null)"
+        read -r -p "是否继续 (将走 apt 升级流程)? (y/N): " confirm || exit 130
+        [[ "${confirm,,}" != "y" ]] && { log_info "已取消。"; return; }
+    fi
+
+    local distro_id="" distro_codename=""
+    if [[ -f /etc/os-release ]]; then
+        distro_id=$(. /etc/os-release && echo "$ID")
+        distro_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+    fi
+    case "$distro_id" in
+        ubuntu|debian) ;;
+        *) distro_id="debian" ;;
+    esac
+    if [[ -z "$distro_codename" ]]; then
+        log_err "无法读取系统代号 (VERSION_CODENAME)，安装中止。"
+        return
+    fi
+
+    mkdir -p /etc/apt/keyrings
+    fetch_text "https://download.docker.com/linux/${distro_id}/gpg" \
+        | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${distro_id} ${distro_codename} stable" \
+        > /etc/apt/sources.list.d/docker.list
+
+    apt-get update >/dev/null 2>&1
+    if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        systemctl enable docker >/dev/null 2>&1
+        systemctl start docker
+        if systemctl is-active --quiet docker; then
+            log_info "Docker 安装成功: $(docker --version 2>/dev/null)"
+            log_info "Compose: $(docker compose version 2>/dev/null | head -n1)"
+            log_info "如需非 root 用户使用 docker，请执行: usermod -aG docker <user> 后重新登录。"
+        else
+            log_warn "Docker 已安装但未启动，请检查 journalctl -u docker"
+        fi
+    else
+        log_err "Docker 安装失败，请检查网络或源是否可用。"
+    fi
+}
+
+common_software_menu() {
+    while true; do
+        clear
+        echo -e "┌──────────────────────────────────────────────┐"
+        echo -e "│              ${BLUE}常用软件安装${PLAIN}                    │"
+        echo -e "└──────────────────────────────────────────────┘"
+        echo
+        echo -e "  ${GREEN}1.${PLAIN} 安装 Caddy Web 服务器"
+        echo -e "  ${GREEN}2.${PLAIN} 安装 Docker CE + Compose 插件"
+        echo -e "  ${GREEN}3.${PLAIN} 一键安装 (Caddy + Docker)"
+        echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
+        echo
+        read -r -p " 请选择: " sub_opt || exit 130
+        case "$sub_opt" in
+            *$'\x03'*|*^C*) exit 130 ;;
+            1) install_caddy ;;
+            2) install_docker ;;
+            3) install_caddy; install_docker ;;
+            0) break ;;
+            *) log_err "无效选项" ;;
+        esac
+        [[ "$sub_opt" != "0" ]] && { read -n 1 -s -r -p "按任意键继续..." || exit 130; }
+    done
 }
 
 manage_service_menu() {
@@ -322,15 +462,16 @@ show_menu() {
     echo -e "────────────────────────────────────────────────"
     echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
     echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"
-    echo -e "  ${GREEN}3.${PLAIN} 更新配置文件 (使用默认链接)"
-    echo -e "  ${GREEN}4.${PLAIN} 更新配置文件 (输入自定义链接)"
-    echo -e "  ${GREEN}5.${PLAIN} 修改默认配置下载链接"
+    echo -e "  ${GREEN}3.${PLAIN} 更新配置文件"
+    echo -e "  ${GREEN}4.${PLAIN} 修改默认配置下载链接"
     echo -e "────────────────────────────────────────────────"
-    echo -e "  ${GREEN}6.${PLAIN} 安装 UFW 防火墙 (安全推荐)"
-    echo -e "  ${GREEN}7.${PLAIN} 系统 TCP 网络优化"
+    echo -e "  ${GREEN}5.${PLAIN} 系统更新 (full-upgrade 修复内核漏洞)"
+    echo -e "  ${GREEN}6.${PLAIN} 安装常用软件 (Caddy / Docker)"
+    echo -e "  ${GREEN}7.${PLAIN} 安装 UFW 防火墙 (安全推荐)"
+    echo -e "  ${GREEN}8.${PLAIN} 系统 TCP 网络优化"
     echo -e "────────────────────────────────────────────────"
-    echo -e "  ${GREEN}8.${PLAIN} 检查并更新管理脚本"
-    echo -e "  ${GREEN}9.${PLAIN} 卸载脚本 (可选卸载 Sing-box)"
+    echo -e "  ${GREEN}9.${PLAIN} 检查并更新管理脚本"
+    echo -e "  ${GREEN}10.${PLAIN} 卸载脚本 (可选卸载 Sing-box)"
     echo -e "  ${GREEN}0.${PLAIN} 退出"
     echo -e "────────────────────────────────────────────────"
     echo -e " 快捷指令: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
@@ -341,28 +482,26 @@ main() {
     check_root
     check_os
     self_install_and_cleanup "$@"
-    
+
     while true; do
         show_menu
-        read -r -p " 请输入选项 [0-9]: " opt || exit 130
+        read -r -p " 请输入选项 [0-10]: " opt || exit 130
         case "$opt" in
             *$'\x03'*|*^C*) exit 130 ;;
             1) install_singbox ;;
             2) manage_service_menu ;;
             3) update_config "$DEFAULT_CONFIG_URL" ;;
-            4) 
-                read -e -r -p "请输入配置链接: " custom_url || exit 130
-                [[ -n "$custom_url" ]] && update_config "$custom_url"
-                ;;
-            5) set_default_config_url ;;
-            6) run_ufw_script ;;
-            7) run_tcp_script ;;
-            8) update_script ;;
-            9) uninstall_script ;;
+            4) set_default_config_url ;;
+            5) system_full_upgrade ;;
+            6) common_software_menu ;;
+            7) run_ufw_script ;;
+            8) run_tcp_script ;;
+            9) update_script ;;
+            10) uninstall_script ;;
             0) exit 0 ;;
             *) log_err "无效选项，请重新输入" ;;
         esac
-        [[ "$opt" != "8" ]] && { read -n 1 -s -r -p "按任意键返回菜单..." || exit 130; }
+        [[ "$opt" != "9" ]] && { read -n 1 -s -r -p "按任意键返回菜单..." || exit 130; }
     done
 }
 
