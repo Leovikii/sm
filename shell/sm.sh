@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.1.1"
+SCRIPT_VERSION="2.1.2"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -120,7 +120,7 @@ get_sb_version() {
 
 install_singbox() {
     install_dependencies
-    log_info "准备安装/更新 Sing-box (使用官方稳定源)..."
+    log_info "准备安装/更新 Sing-box..."
     
     mkdir -p /etc/apt/keyrings
     fetch_text "https://sing-box.app/gpg.key" > /etc/apt/keyrings/sagernet.asc
@@ -259,18 +259,38 @@ system_full_upgrade() {
 
 install_caddy() {
     install_dependencies
-    log_info "准备安装 Caddy (使用 cloudsmith 官方源)..."
+    log_info "准备安装 Caddy..."
 
-    mkdir -p /etc/apt/keyrings
-    fetch_text "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" \
-        | gpg --dearmor --yes -o /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
-    chmod a+r /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
+    rm -f /etc/apt/sources.list.d/caddy-stable.list
+    rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    rm -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
 
-    fetch_text "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" \
-        | sed 's|^deb |deb [signed-by=/etc/apt/keyrings/caddy-stable-archive-keyring.gpg] |; s|^deb-src |deb-src [signed-by=/etc/apt/keyrings/caddy-stable-archive-keyring.gpg] |' \
-        > /etc/apt/sources.list.d/caddy-stable.list
+    apt-get install -y debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
 
-    apt-get update >/dev/null 2>&1
+    mkdir -p /usr/share/keyrings
+    if ! fetch_text "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" \
+            | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg; then
+        log_err "Caddy GPG 密钥下载/导入失败。"
+        return
+    fi
+    chmod a+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+
+    if ! fetch_text "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" \
+            > /etc/apt/sources.list.d/caddy-stable.list; then
+        log_err "Caddy 软件源列表下载失败。"
+        rm -f /etc/apt/sources.list.d/caddy-stable.list
+        return
+    fi
+    if [[ ! -s /etc/apt/sources.list.d/caddy-stable.list ]]; then
+        log_err "Caddy 软件源列表为空，已中止。"
+        rm -f /etc/apt/sources.list.d/caddy-stable.list
+        return
+    fi
+
+    if ! apt-get update; then
+        log_err "apt-get update 失败，请检查上方错误。"
+        return
+    fi
     if apt-get install -y caddy; then
         systemctl enable caddy >/dev/null 2>&1
         systemctl start caddy
@@ -286,7 +306,7 @@ install_caddy() {
 
 install_docker() {
     install_dependencies
-    log_info "准备安装 Docker CE + Compose 插件 (使用 docker.com 官方源)..."
+    log_info "准备安装 Docker CE + Compose 插件..."
 
     if command -v docker &>/dev/null; then
         log_warn "检测到已安装: $(docker --version 2>/dev/null)"
@@ -308,15 +328,30 @@ install_docker() {
         return
     fi
 
-    mkdir -p /etc/apt/keyrings
-    fetch_text "https://download.docker.com/linux/${distro_id}/gpg" \
-        | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
+    rm -f /etc/apt/sources.list.d/docker.list
+    rm -f /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.gpg
 
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${distro_id} ${distro_codename} stable" \
+    install -m 0755 -d /etc/apt/keyrings
+    if ! fetch_text "https://download.docker.com/linux/${distro_id}/gpg" \
+            > /etc/apt/keyrings/docker.asc; then
+        log_err "Docker GPG 密钥下载失败。"
+        rm -f /etc/apt/keyrings/docker.asc
+        return
+    fi
+    if [[ ! -s /etc/apt/keyrings/docker.asc ]]; then
+        log_err "Docker GPG 密钥文件为空，已中止。"
+        rm -f /etc/apt/keyrings/docker.asc
+        return
+    fi
+    chmod a+r /etc/apt/keyrings/docker.asc
+
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${distro_id} ${distro_codename} stable" \
         > /etc/apt/sources.list.d/docker.list
 
-    apt-get update >/dev/null 2>&1
+    if ! apt-get update; then
+        log_err "apt-get update 失败，请检查上方错误。"
+        return
+    fi
     if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
         systemctl enable docker >/dev/null 2>&1
         systemctl start docker
