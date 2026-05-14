@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.1.1"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -16,6 +16,7 @@ BLUE='\033[34m'
 PLAIN='\033[0m'
 
 TMP_DIR="/tmp/sm_manager_tmp_$$"
+DEPS_FLAG="/var/lib/sm/.deps_ok"
 _DEPS_CHECKED=0
 
 cleanup() { rm -rf "$TMP_DIR"; }
@@ -47,6 +48,10 @@ check_os() {
 
 install_dependencies() {
     [[ $_DEPS_CHECKED -eq 1 ]] && return
+    if [[ -f "$DEPS_FLAG" ]]; then
+        _DEPS_CHECKED=1
+        return
+    fi
     local deps="curl wget jq tar ca-certificates gnupg"
     local missing=""
     for dep in $deps; do
@@ -55,8 +60,13 @@ install_dependencies() {
     if [[ -n "$missing" ]]; then
         log_info "正在安装必要依赖: $missing"
         apt-get update -y >/dev/null 2>&1
-        apt-get install -y $missing >/dev/null 2>&1
+        if ! apt-get install -y $missing >/dev/null 2>&1; then
+            log_err "依赖安装失败: $missing"
+            return 1
+        fi
     fi
+    mkdir -p "$(dirname "$DEPS_FLAG")"
+    touch "$DEPS_FLAG"
     _DEPS_CHECKED=1
 }
 
@@ -436,6 +446,7 @@ uninstall_script() {
             rm -f "$INSTALL_PATH"
             log_info "脚本文件已删除: $INSTALL_PATH"
         fi
+        rm -rf /var/lib/sm
         echo -e "${GREEN}卸载完成。再见！${PLAIN}"
         exit 0
     else
