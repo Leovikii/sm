@@ -26,6 +26,8 @@ OPENLIST_DIR="/opt/openlist"
 # AnyTLS 证书同步目录：所有服务器统一使用 active.{crt,key}
 SB_CERT_DIR="/etc/sing-box/certs"
 CERT_SYNC_SCRIPT="/usr/local/bin/sm-cert-sync.sh"
+CERT_SYNC_SERVICE="/etc/systemd/system/sm-cert-sync.service"
+CERT_SYNC_TIMER="/etc/systemd/system/sm-cert-sync.timer"
 
 # 用 $'...' 在赋值时就把 \033 解析成真 ESC 字节，
 # 让 read -p / printf "%s" 等不解析转义的场景也能正常带色
@@ -460,7 +462,7 @@ caddy::uninstall() {
 # >>> src/modules/camouflage.sh
 # ==============================================================================
 # camouflage:: 伪装站点 + AnyTLS 证书统一同步
-# 通过 Caddy events on cert_obtained 钩子，将证书同步到 /etc/sing-box/certs/
+# 通过 systemd timer 每天扫描 Caddy 证书目录，同步到 /etc/sing-box/certs/
 # 维护 active.{crt,key} 软链接，让所有服务器 AnyTLS 配置统一指向 active.*
 # ==============================================================================
 
@@ -605,102 +607,111 @@ camouflage::_verify_domain_dns() {
     ui::confirm "是否仍然继续?"
 }
 
-# 写出 cert-sync 脚本与 Caddyfile events 块。幂等。
+# 写出 cert-sync 脚本 + systemd timer。幂等。
+# 不依赖 caddy events 模块（官方包不带 exec handler，那是第三方插件）。
+# 改用 systemd timer 每天扫描 caddy 证书目录 → 同步到 SB_CERT_DIR
 camouflage::install_cert_hook() {
-    log::step "安装 Caddy → sing-box 证书同步钩子..."
+    log::step "安装证书同步脚本与 systemd timer..."
 
-    # 1. 同步脚本
     mkdir -p "$SB_CERT_DIR"
     chmod 0755 "$SB_CERT_DIR"
 
     cat > "$CERT_SYNC_SCRIPT" <<'SYNC_EOF'
 #!/bin/bash
-# sm-cert-sync.sh - Caddy events 钩子调用，同步证书到 /etc/sing-box/certs
-# 总是复制 <domain>.{crt,key}；仅当域名 == .active-domain 时才更新 active 软链接
-set -euo pipefail
-DOMAIN="${1:-}"
-[[ -z "$DOMAIN" ]] && { echo "usage: $0 DOMAIN" >&2; exit 1; }
+# sm-cert-sync.sh - 扫 caddy 证书目录，同步所有 .crt/.key 到 /etc/sing-box/certs
+# 维护 active.{crt,key} 软链接（指向 .active-domain 文件里记录的域名）
+set -uo pipefail
 
 DEST="/etc/sing-box/certs"
 ACTIVE_FILE="$DEST/.active-domain"
-mkdir -p "$DEST"
-
-# Caddy 证书目录：CA 子目录可能不同（letsencrypt / zerossl）
 CADDY_DATA="${XDG_DATA_HOME:-/var/lib/caddy/.local/share}/caddy"
-SRC=$(find "$CADDY_DATA/certificates" -type d -name "$DOMAIN" 2>/dev/null | head -n1)
-[[ -z "$SRC" ]] && { echo "[cert-sync] 未找到 $DOMAIN 的 Caddy 证书目录" >&2; exit 1; }
+CERT_ROOT="$CADDY_DATA/certificates"
 
-cp -f "$SRC/$DOMAIN.crt" "$DEST/$DOMAIN.crt"
-cp -f "$SRC/$DOMAIN.key" "$DEST/$DOMAIN.key"
-chmod 0644 "$DEST/$DOMAIN.crt"
-chmod 0640 "$DEST/$DOMAIN.key"
+mkdir -p "$DEST"
+[[ -d "$CERT_ROOT" ]] || { echo "[cert-sync] caddy 证书目录不存在: $CERT_ROOT" >&2; exit 0; }
 
-# 首次部署：自动认领 active
-if [[ ! -f "$ACTIVE_FILE" ]]; then
-    echo "$DOMAIN" > "$ACTIVE_FILE"
-    chmod 0644 "$ACTIVE_FILE"
+# 遍历 CA 子目录下的所有域名子目录，复制 .crt/.key
+# 用 cp -u（仅当 src 比 dest 新才复制）避免无谓 mtime 触动，
+# 防止 sing-box 误以为证书变化而重载
+shopt -s nullglob
+synced=0
+for ca_dir in "$CERT_ROOT"/*/; do
+    for d in "$ca_dir"*/; do
+        domain=$(basename "$d")
+        crt="$d$domain.crt"
+        key="$d$domain.key"
+        [[ -s "$crt" && -s "$key" ]] || continue
+        cp -u "$crt" "$DEST/$domain.crt"
+        cp -u "$key" "$DEST/$domain.key"
+        chmod 0644 "$DEST/$domain.crt"
+        chmod 0640 "$DEST/$domain.key"
+        synced=$((synced + 1))
+    done
+done
+
+[[ $synced -eq 0 ]] && { echo "[cert-sync] 无证书可同步（caddy 还没拿到任何证书）" >&2; exit 0; }
+
+# 维护 active 软链接：以 .active-domain 文件里记录的域名为准
+# 若文件不存在，挑一个已同步的域名作为 active（首次部署兜底）
+ACTIVE_DOMAIN=""
+[[ -f "$ACTIVE_FILE" ]] && ACTIVE_DOMAIN="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
+if [[ -z "$ACTIVE_DOMAIN" || ! -f "$DEST/$ACTIVE_DOMAIN.crt" ]]; then
+    ACTIVE_DOMAIN=$(ls "$DEST"/*.crt 2>/dev/null | grep -v '/active.crt$' | head -n1 | xargs -r basename | sed 's/\.crt$//')
+    [[ -n "$ACTIVE_DOMAIN" ]] && echo "$ACTIVE_DOMAIN" > "$ACTIVE_FILE"
 fi
-
-ACTIVE_DOMAIN="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
-
-if [[ "$DOMAIN" == "$ACTIVE_DOMAIN" ]]; then
-    ln -sfn "$DOMAIN.crt" "$DEST/active.crt"
-    ln -sfn "$DOMAIN.key" "$DEST/active.key"
-    echo "[cert-sync] $DOMAIN (active) -> $DEST/active.{crt,key}"
-else
-    echo "[cert-sync] $DOMAIN copied (active=$ACTIVE_DOMAIN, link unchanged)"
+if [[ -n "$ACTIVE_DOMAIN" && -f "$DEST/$ACTIVE_DOMAIN.crt" ]]; then
+    ln -sfn "$ACTIVE_DOMAIN.crt" "$DEST/active.crt"
+    ln -sfn "$ACTIVE_DOMAIN.key" "$DEST/active.key"
 fi
-
-# sing-box v1.8+ 检测到证书文件变化会自动热重载，无需 systemctl reload
+echo "[cert-sync] synced=$synced active=$ACTIVE_DOMAIN"
 SYNC_EOF
     chmod +x "$CERT_SYNC_SCRIPT"
-    log::info "证书同步脚本: $CERT_SYNC_SCRIPT"
 
-    # 2. Caddyfile events 块（幂等注入）
-    if [[ ! -f "$CADDY_MAIN_CONF" ]] || ! grep -q "cert_obtained.*sm-cert-sync" "$CADDY_MAIN_CONF" 2>/dev/null; then
-        camouflage::_inject_caddy_events
-    fi
+    # systemd service：单次 oneshot 跑同步脚本
+    cat > "$CERT_SYNC_SERVICE" <<EOF
+[Unit]
+Description=sm cert sync (Caddy -> sing-box)
 
-    # 3. 自动 import sites.d
+[Service]
+Type=oneshot
+ExecStart=${CERT_SYNC_SCRIPT}
+EOF
+
+    # systemd timer：开机后 2 分钟跑一次，之后每天跑一次
+    # （Caddy 续签 60 天频率，旧证书还有 30 天，每天扫一次足够；
+    # cp -u 跳过未变化的文件，无谓重载也已避免）
+    cat > "$CERT_SYNC_TIMER" <<EOF
+[Unit]
+Description=sm cert sync timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now sm-cert-sync.timer >/dev/null 2>&1
+    log::info "证书同步 timer 已启用 (每日扫描一次)"
+
+    # 自动 import sites.d
     mkdir -p "$CADDY_SITES_DIR"
     chown root:caddy "$CADDY_SITES_DIR" 2>/dev/null || true
     chmod 0755 "$CADDY_SITES_DIR" 2>/dev/null || true
-    if ! grep -q "import ${CADDY_SITES_DIR}/" "$CADDY_MAIN_CONF" 2>/dev/null; then
+    if [[ -f "$CADDY_MAIN_CONF" ]] && ! grep -q "import ${CADDY_SITES_DIR}/" "$CADDY_MAIN_CONF" 2>/dev/null; then
         echo "" >> "$CADDY_MAIN_CONF"
         echo "import ${CADDY_SITES_DIR}/*.caddy" >> "$CADDY_MAIN_CONF"
+        camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
     fi
-    camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
 }
 
-# 在 Caddyfile 顶部全局选项中注入 events 钩子
-camouflage::_inject_caddy_events() {
-    local block
-    block="$(cat <<EOF
-{
-    email admin@example.com
-    events {
-        on cert_obtained exec ${CERT_SYNC_SCRIPT} {event.data.identifier}
-    }
-}
-EOF
-)"
-    if [[ -f "$CADDY_MAIN_CONF" ]] && grep -q "^{" "$CADDY_MAIN_CONF"; then
-        # 已有全局块：用 sed 在第一个 { 之后插入 events 行（仅当未注入时）
-        if ! grep -q "cert_obtained" "$CADDY_MAIN_CONF"; then
-            sed -i "/^{/a\\    events {\\n        on cert_obtained exec ${CERT_SYNC_SCRIPT} {event.data.identifier}\\n    }" "$CADDY_MAIN_CONF"
-            log::info "已在现有 Caddyfile 全局块中注入 events 钩子"
-        fi
-    else
-        # 无全局块或文件不存在：写入全新内容（保留原内容追加在后）
-        local tmp
-        tmp=$(mktemp)
-        echo "$block" > "$tmp"
-        [[ -f "$CADDY_MAIN_CONF" ]] && cat "$CADDY_MAIN_CONF" >> "$tmp"
-        mv "$tmp" "$CADDY_MAIN_CONF"
-        log::info "已写入新 Caddyfile 全局块（含 events 钩子）"
-    fi
-    # mktemp 默认 0600 + mv 保留权限，会让 caddy 用户读不到 → reload 失败
-    camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
+# 立即跑一次同步（伪装部署完毕、Caddy 启动并拿到首张证书后调用）
+camouflage::run_cert_sync_now() {
+    [[ -x "$CERT_SYNC_SCRIPT" ]] || return 0
+    "$CERT_SYNC_SCRIPT" 2>&1 | sed 's/^/  /' || true
 }
 
 # 抓取首次启动 (config.json 不存在时) 打印的初始管理员密码
@@ -782,7 +793,9 @@ camouflage::install_static() {
 
     echo
     log::info "✅ 静态伪装就绪: https://${domain}"
-    log::info "   首次访问由 Caddy 自动申请证书，证书将自动同步到 ${SB_CERT_DIR}/"
+    log::info "   首次访问该域名时 Caddy 会自动申请证书"
+    log::info "   证书将由 sm-cert-sync.timer 每天同步到 ${SB_CERT_DIR}/active.{crt,key}"
+    log::info "   想立即同步: systemctl start sm-cert-sync.service"
     log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
 }
 
@@ -850,6 +863,7 @@ EOF
     log::info "✅ OpenList 伪装就绪: https://${domain}"
     log::info "   OpenList 数据: ${OPENLIST_DIR}/data"
     log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
+    log::info "   证书将由 sm-cert-sync.timer 每天同步；想立即同步: systemctl start sm-cert-sync.service"
 
     # 抓取首次启动时打印的初始密码（已设置过密码的容器抓不到，正常）
     log::step "等待 OpenList 初始化输出默认密码 (最多 30 秒)..."
@@ -970,6 +984,12 @@ camouflage::uninstall() {
 
     rm -f "$CERT_SYNC_SCRIPT"
     log::info "证书同步脚本已删除"
+
+    systemctl disable --now sm-cert-sync.timer >/dev/null 2>&1 || true
+    rm -f "$CERT_SYNC_TIMER" "$CERT_SYNC_SERVICE"
+    systemctl daemon-reload
+    log::info "证书同步 timer/service 已清理"
+
     rm -f "$ACTIVE_DOMAIN_FILE"
     log::warn "证书目录 $SB_CERT_DIR 已保留 (sing-box 仍在使用)。如需清理请手动 rm -rf"
 
@@ -1216,8 +1236,14 @@ tcp::run() {
 
 ufw::is_installed() { sys::has_cmd ufw; }
 
+# 加 timeout 防止 ufw status numbered 在某些 nf_tables 状态下卡死
+# 5 秒还没返回就放弃，避免脚本整个 hang 住
+ufw::_status_numbered() {
+    timeout 5 ufw status numbered 2>/dev/null
+}
+
 ufw::is_enabled() {
-    sys::has_cmd ufw && LC_ALL=C ufw status verbose 2>/dev/null | head -n1 | grep -q "Status: active"
+    sys::has_cmd ufw && LC_ALL=C timeout 5 ufw status verbose 2>/dev/null | head -n1 | grep -q "Status: active"
 }
 
 ufw::status_text() {
@@ -1334,7 +1360,7 @@ ufw::allow() {
 
 ufw::list_numbered() {
     ufw::_require || return
-    ufw status numbered
+    ufw::_status_numbered
 }
 
 # 交互式添加：解析输入 + 询问是否同时放行另一协议
@@ -1364,9 +1390,9 @@ ufw::add_rule_interactive() {
 ufw::delete_rule_interactive() {
     ufw::_require || return
     log::info "当前防火墙规则："
-    ufw status numbered
+    ufw::_status_numbered
 
-    if ! ufw status numbered | grep -q "^\["; then
+    if ! ufw::_status_numbered | grep -q "^\["; then
         log::warn "当前没有任何规则"
         return
     fi
@@ -1381,7 +1407,7 @@ ufw::delete_rule_interactive() {
     fi
 
     local rules_raw rule_info
-    rules_raw=$(ufw status numbered 2>/dev/null)
+    rules_raw=$(ufw::_status_numbered)
     rule_info=$(echo "$rules_raw" | grep "^\[ *$rule_num\]" | sed 's/\x1b\[[0-9;]*m//g')
     if [[ -z "$rule_info" ]]; then
         log::err "无效的规则编号"
@@ -1448,7 +1474,7 @@ ufw::delete_rule_interactive() {
         fi
     done
     log::info "更新后的规则列表："
-    ufw status numbered
+    ufw::_status_numbered
 }
 
 # >>> src/menu/camouflage.sh

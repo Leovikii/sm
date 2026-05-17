@@ -17,6 +17,8 @@ OPENLIST_DIR="/opt/openlist"
 # AnyTLS 证书同步目录：所有服务器统一使用 active.{crt,key}
 SB_CERT_DIR="/etc/sing-box/certs"
 CERT_SYNC_SCRIPT="/usr/local/bin/sm-cert-sync.sh"
+CERT_SYNC_SERVICE="/etc/systemd/system/sm-cert-sync.service"
+CERT_SYNC_TIMER="/etc/systemd/system/sm-cert-sync.timer"
 
 # 用 $'...' 在赋值时就把 \033 解析成真 ESC 字节，
 # 让 read -p / printf "%s" 等不解析转义的场景也能正常带色

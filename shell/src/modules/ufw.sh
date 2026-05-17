@@ -4,8 +4,14 @@
 
 ufw::is_installed() { sys::has_cmd ufw; }
 
+# 加 timeout 防止 ufw status numbered 在某些 nf_tables 状态下卡死
+# 5 秒还没返回就放弃，避免脚本整个 hang 住
+ufw::_status_numbered() {
+    timeout 5 ufw status numbered 2>/dev/null
+}
+
 ufw::is_enabled() {
-    sys::has_cmd ufw && LC_ALL=C ufw status verbose 2>/dev/null | head -n1 | grep -q "Status: active"
+    sys::has_cmd ufw && LC_ALL=C timeout 5 ufw status verbose 2>/dev/null | head -n1 | grep -q "Status: active"
 }
 
 ufw::status_text() {
@@ -122,7 +128,7 @@ ufw::allow() {
 
 ufw::list_numbered() {
     ufw::_require || return
-    ufw status numbered
+    ufw::_status_numbered
 }
 
 # 交互式添加：解析输入 + 询问是否同时放行另一协议
@@ -152,9 +158,9 @@ ufw::add_rule_interactive() {
 ufw::delete_rule_interactive() {
     ufw::_require || return
     log::info "当前防火墙规则："
-    ufw status numbered
+    ufw::_status_numbered
 
-    if ! ufw status numbered | grep -q "^\["; then
+    if ! ufw::_status_numbered | grep -q "^\["; then
         log::warn "当前没有任何规则"
         return
     fi
@@ -169,7 +175,7 @@ ufw::delete_rule_interactive() {
     fi
 
     local rules_raw rule_info
-    rules_raw=$(ufw status numbered 2>/dev/null)
+    rules_raw=$(ufw::_status_numbered)
     rule_info=$(echo "$rules_raw" | grep "^\[ *$rule_num\]" | sed 's/\x1b\[[0-9;]*m//g')
     if [[ -z "$rule_info" ]]; then
         log::err "无效的规则编号"
@@ -236,5 +242,5 @@ ufw::delete_rule_interactive() {
         fi
     done
     log::info "更新后的规则列表："
-    ufw status numbered
+    ufw::_status_numbered
 }
