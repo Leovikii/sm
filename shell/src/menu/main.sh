@@ -4,15 +4,22 @@
 
 menu::main() {
     while true; do
+        # 状态采集集中在循环顶部，避免 echo 行内多次嵌套子 shell
+        local up sb_ver sb_st ufw_st
+        up="$(sys::uptime)"
+        sb_ver="$(sb::version)"
+        sb_st="$(sb::status)"
+        ufw_st="$(ufw::status_text)"
+
         ui::clear
         echo -e "┌──────────────────────────────────────────────┐"
         echo -e "│              ${BLUE}Sing-box 管理脚本${PLAIN}               │"
         echo -e "│                ${GREEN}版本: v${SCRIPT_VERSION}${PLAIN}                 │"
         echo -e "└──────────────────────────────────────────────┘"
-        echo -e " 系统运行时间: $(sys::uptime)"
-        echo -e " Sing-box版本: ${BLUE}$(sb::version)${PLAIN}"
-        echo -e " 运行状态    : $(sb::status)"
-        echo -e " UFW 状态    : $(ufw::status_text)"
+        echo -e " 系统运行时间: ${up}"
+        echo -e " Sing-box版本: ${BLUE}${sb_ver}${PLAIN}"
+        echo -e " 运行状态    : ${sb_st}"
+        echo -e " UFW 状态    : ${ufw_st}"
         ui::divider
         echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
         echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"

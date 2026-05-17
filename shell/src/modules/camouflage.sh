@@ -192,6 +192,33 @@ EOF
 }
 
 # ----------------------------------------------------------------------
+# OpenList 默认密码抓取
+# ----------------------------------------------------------------------
+# 首次启动 (config.json 不存在) 时 OpenList 会打印类似：
+#   Successfully created the admin user and the initial password is: 0SL9xLxz
+# 该日志在容器内部初始化完成时才出现，速度受机器性能影响。
+# 我们最多轮询 30 秒，每秒查一次 docker logs。
+camouflage::wait_openlist_password() {
+    local container="${1:-openlist}"
+    local timeout="${2:-30}"
+    local pattern="initial password is:"
+    local i=0 line=""
+
+    while (( i < timeout )); do
+        line=$(docker logs "$container" 2>&1 | grep -m1 "$pattern" || true)
+        [[ -n "$line" ]] && break
+        sleep 1
+        i=$((i + 1))
+    done
+
+    if [[ -z "$line" ]]; then
+        return 1
+    fi
+    # "... initial password is: PWD" -> PWD
+    echo "${line##*initial password is: }"
+}
+
+# ----------------------------------------------------------------------
 # 站点配置（每个域名一个文件，便于增删）
 # ----------------------------------------------------------------------
 # camouflage::_write_site DOMAIN BODY
@@ -323,8 +350,24 @@ EOF
     echo
     log::info "✅ OpenList 伪装就绪: https://${domain}"
     log::info "   OpenList 数据: ${OPENLIST_DIR}/data"
-    log::info "   首次启动后请到 https://${domain} 完成初始化"
     log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
+
+    # 抓取首次启动时打印的初始密码（已设置过密码的容器抓不到，正常）
+    log::step "等待 OpenList 初始化输出默认密码 (最多 30 秒)..."
+    local pwd
+    if pwd=$(camouflage::wait_openlist_password openlist 30); then
+        echo
+        echo -e "  ${GREEN}━━━ OpenList 初始管理员凭证 ━━━${PLAIN}"
+        echo -e "  地址  : ${BLUE}https://${domain}${PLAIN}"
+        echo -e "  用户名: ${BLUE}admin${PLAIN}"
+        echo -e "  密码  : ${YELLOW}${pwd}${PLAIN}"
+        echo -e "  ${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
+        log::warn "请尽快登录 https://${domain} 修改默认密码"
+    else
+        log::warn "30 秒内未抓到默认密码"
+        log::info "可能原因：容器初始化较慢，或 ${OPENLIST_DIR}/data 已存在数据（密码已修改过）"
+        log::info "可手动查看完整日志: docker logs openlist | grep -i password"
+    fi
 }
 
 # ----------------------------------------------------------------------
