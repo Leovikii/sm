@@ -14,7 +14,7 @@ set -uo pipefail
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.0.0"
+SCRIPT_VERSION="3.0.1"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -483,6 +483,14 @@ CADDY_MAIN_CONF="/etc/caddy/Caddyfile"
 CADDY_SITES_DIR="/etc/caddy/sites.d"
 ACTIVE_DOMAIN_FILE="${SB_CERT_DIR}/.active-domain"
 
+# Caddy 进程以 caddy 用户运行；写入配置后必须确保 caddy 可读
+# 否则 systemctl reload caddy 会报 "permission denied"
+camouflage::_fix_caddy_perms() {
+    local target="$1"
+    chmod 0644 "$target" 2>/dev/null || true
+    chown root:caddy "$target" 2>/dev/null || true
+}
+
 # active-domain 文件管理（决定 AnyTLS 用哪张证书）
 camouflage::read_active_domain() {
     [[ -f "$ACTIVE_DOMAIN_FILE" ]] && cat "$ACTIVE_DOMAIN_FILE" 2>/dev/null || echo ""
@@ -542,7 +550,7 @@ camouflage::ensure_docker() {
     docker::is_installed || { log::err "Docker 安装失败，无法继续。"; return 1; }
 }
 
-# 询问域名（必填，简单格式校验）
+# 询问域名（必填，格式校验 + DNS 解析校验）
 camouflage::_ask_domain() {
     local var="$1" prompt="${2:-请输入指向本机的域名: }" val=""
     while [[ -z "$val" ]]; do
@@ -550,9 +558,66 @@ camouflage::_ask_domain() {
         if [[ ! "$val" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$ ]]; then
             log::err "域名格式不正确，请重新输入"
             val=""
+            continue
+        fi
+        if ! camouflage::_verify_domain_dns "$val"; then
+            val=""
         fi
     done
     printf -v "$var" '%s' "$val"
+}
+
+# 拉本机公网 IP（IPv4 + IPv6 任一）
+camouflage::_my_public_ips() {
+    local v4 v6
+    v4=$(curl -fsS4 --max-time 4 https://api.ipify.org 2>/dev/null || true)
+    v6=$(curl -fsS6 --max-time 4 https://api64.ipify.org 2>/dev/null || true)
+    [[ -n "$v4" ]] && echo "$v4"
+    [[ -n "$v6" ]] && echo "$v6"
+}
+
+# 校验域名是否解析到本机公网 IP
+# 返回 0 = 通过（匹配，或用户选择强制继续）；1 = 用户取消
+camouflage::_verify_domain_dns() {
+    local domain="$1"
+    log::step "校验域名解析: $domain"
+
+    local resolved my_ips matched=0
+    # getent ahosts 一次返回 v4+v6 解析结果
+    resolved=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u)
+    my_ips=$(camouflage::_my_public_ips)
+
+    if [[ -z "$resolved" ]]; then
+        log::warn "无法解析 $domain（DNS 故障或域名未生效）"
+        ui::confirm "是否仍然继续? (用于内网测试 / DNS 未生效场景)"
+        return $?
+    fi
+    if [[ -z "$my_ips" ]]; then
+        log::warn "获取本机公网 IP 失败（网络异常或防火墙拦截 ipify）"
+        log::info "解析到的 IP:"; echo "$resolved" | sed 's/^/    /'
+        ui::confirm "无法验证，是否仍然继续?"
+        return $?
+    fi
+
+    # 任一交集即视为匹配
+    while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        if echo "$resolved" | grep -qx "$ip"; then
+            matched=1
+            break
+        fi
+    done <<< "$my_ips"
+
+    if [[ $matched -eq 1 ]]; then
+        log::info "域名解析正确 ✓"
+        return 0
+    fi
+
+    log::warn "域名 $domain 未解析到本机公网 IP"
+    log::info "  本机公网 IP:"; echo "$my_ips"  | sed 's/^/    /'
+    log::info "  域名解析到:";   echo "$resolved" | sed 's/^/    /'
+    log::info "  CDN / 反代后端场景下解析必然不一致，可强制继续"
+    ui::confirm "是否仍然继续?"
 }
 
 # ----------------------------------------------------------------------
@@ -625,10 +690,13 @@ SYNC_EOF
 
     # 3. 自动 import sites.d
     mkdir -p "$CADDY_SITES_DIR"
+    chown root:caddy "$CADDY_SITES_DIR" 2>/dev/null || true
+    chmod 0755 "$CADDY_SITES_DIR" 2>/dev/null || true
     if ! grep -q "import ${CADDY_SITES_DIR}/" "$CADDY_MAIN_CONF" 2>/dev/null; then
         echo "" >> "$CADDY_MAIN_CONF"
         echo "import ${CADDY_SITES_DIR}/*.caddy" >> "$CADDY_MAIN_CONF"
     fi
+    camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
 }
 
 # 在 Caddyfile 顶部全局选项中注入 events 钩子
@@ -658,6 +726,8 @@ EOF
         mv "$tmp" "$CADDY_MAIN_CONF"
         log::info "已写入新 Caddyfile 全局块（含 events 钩子）"
     fi
+    # mktemp 默认 0600 + mv 保留权限，会让 caddy 用户读不到 → reload 失败
+    camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
 }
 
 # ----------------------------------------------------------------------
@@ -699,6 +769,7 @@ ${domain} {
 ${body}
 }
 EOF
+    camouflage::_fix_caddy_perms "$CADDY_SITES_DIR/${domain}.caddy"
 }
 
 # ----------------------------------------------------------------------
