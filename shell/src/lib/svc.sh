@@ -11,7 +11,6 @@ svc::disable()   { systemctl disable "$1" 2>/dev/null; }
 svc::logs()      { journalctl -u "$1" -f -o cat; }
 
 # svc::ensure_running NAME [OK_MSG] [FAIL_MSG]
-# 封装 enable + start + is_active 检查的常见组合。
 svc::ensure_running() {
     local name="$1"
     local ok_msg="${2:-$name 已启动}"

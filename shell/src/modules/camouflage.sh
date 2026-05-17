@@ -1,13 +1,7 @@
 # ==============================================================================
 # camouflage:: 伪装站点 + AnyTLS 证书统一同步
-#
-# 设计目标：
-#   - 静态伪装：用 Caddy 直发一个低资源 html5up Massively 模板
-#   - OpenList 伪装：docker compose 起 OpenList，Caddy 反代 5244
-#   - 证书统一：通过 Caddy events on cert_obtained 钩子，把申请到的证书
-#               同步到 /etc/sing-box/certs/<domain>.{crt,key}，并维护
-#               active.{crt,key} 软链接，让所有服务器的 anytls 配置统一
-#               指向 active.* 即可，证书自动续签后自动同步
+# 通过 Caddy events on cert_obtained 钩子，将证书同步到 /etc/sing-box/certs/
+# 维护 active.{crt,key} 软链接，让所有服务器 AnyTLS 配置统一指向 active.*
 # ==============================================================================
 
 CADDY_MAIN_CONF="/etc/caddy/Caddyfile"
@@ -151,11 +145,7 @@ camouflage::_verify_domain_dns() {
     ui::confirm "是否仍然继续?"
 }
 
-# ----------------------------------------------------------------------
-# 证书同步钩子安装
-# ----------------------------------------------------------------------
-# 写出 cert-sync 脚本与 Caddyfile events 块。
-# 幂等：重复调用只更新内容，不重复注入。
+# 写出 cert-sync 脚本与 Caddyfile events 块。幂等。
 camouflage::install_cert_hook() {
     log::step "安装 Caddy → sing-box 证书同步钩子..."
 
@@ -165,16 +155,8 @@ camouflage::install_cert_hook() {
 
     cat > "$CERT_SYNC_SCRIPT" <<'SYNC_EOF'
 #!/bin/bash
-# sm-cert-sync.sh - Caddy 申请/续签证书后由 events 钩子自动调用
-#
-# 行为：
-#   - 总是把证书复制到 /etc/sing-box/certs/<domain>.{crt,key}
-#     (无害，多个域名可共存)
-#   - 只有当本次域名 == /etc/sing-box/certs/.active-domain 里记录的域名时，
-#     才更新 active.{crt,key} 软链接
-#   - .active-domain 不存在时（首次部署）当前域名自动成为 active
-#
-# 这样，将来你手动新增任何反代/Caddy 站点都不会影响 AnyTLS 用的证书。
+# sm-cert-sync.sh - Caddy events 钩子调用，同步证书到 /etc/sing-box/certs
+# 总是复制 <domain>.{crt,key}；仅当域名 == .active-domain 时才更新 active 软链接
 set -euo pipefail
 DOMAIN="${1:-}"
 [[ -z "$DOMAIN" ]] && { echo "usage: $0 DOMAIN" >&2; exit 1; }
@@ -261,13 +243,8 @@ EOF
     camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
 }
 
-# ----------------------------------------------------------------------
-# OpenList 默认密码抓取
-# ----------------------------------------------------------------------
-# 首次启动 (config.json 不存在) 时 OpenList 会打印类似：
-#   Successfully created the admin user and the initial password is: 0SL9xLxz
-# 该日志在容器内部初始化完成时才出现，速度受机器性能影响。
-# 我们最多轮询 30 秒，每秒查一次 docker logs。
+# 抓取首次启动 (config.json 不存在时) 打印的初始管理员密码
+# 已设置过密码的容器抓不到（容器看到 config 直接读取，不再打印）
 camouflage::wait_openlist_password() {
     local container="${1:-openlist}"
     local timeout="${2:-30}"
@@ -288,9 +265,6 @@ camouflage::wait_openlist_password() {
     echo "${line##*initial password is: }"
 }
 
-# ----------------------------------------------------------------------
-# 站点配置（每个域名一个文件，便于增删）
-# ----------------------------------------------------------------------
 # camouflage::_write_site DOMAIN BODY
 camouflage::_write_site() {
     local domain="$1" body="$2"
@@ -303,9 +277,6 @@ EOF
     camouflage::_fix_caddy_perms "$CADDY_SITES_DIR/${domain}.caddy"
 }
 
-# ----------------------------------------------------------------------
-# 静态伪装
-# ----------------------------------------------------------------------
 camouflage::install_static() {
     camouflage::ensure_caddy || return 1
 
@@ -355,9 +326,6 @@ camouflage::install_static() {
     log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
 }
 
-# ----------------------------------------------------------------------
-# OpenList 伪装
-# ----------------------------------------------------------------------
 camouflage::install_openlist() {
     camouflage::ensure_caddy || return 1
     camouflage::ensure_docker || return 1
@@ -441,9 +409,6 @@ EOF
     fi
 }
 
-# ----------------------------------------------------------------------
-# 状态查询 / 卸载
-# ----------------------------------------------------------------------
 camouflage::status_text() {
     local has_static=0 has_openlist=0
     [[ -d "$CAMOUFLAGE_WEB_ROOT" ]] && has_static=1

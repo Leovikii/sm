@@ -13,7 +13,6 @@ self::install_shortcut() {
 }
 
 # self::persist_var KEY VAL [PATH]
-# 把变量写回脚本（默认 INSTALL_PATH，自更新时可指定临时文件路径）。
 self::persist_var() {
     local key="$1" val="$2" path="${3:-$INSTALL_PATH}"
     sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$path"
@@ -66,7 +65,6 @@ self::uninstall() {
     log::info "脚本将逐项检查各组件是否已安装并询问是否一并卸载。"
     echo
 
-    # Sing-box
     if sys::has_cmd sing-box; then
         if ui::confirm "检测到 ${BLUE}Sing-box${PLAIN}，是否卸载?"; then
             sb::uninstall
@@ -76,7 +74,6 @@ self::uninstall() {
         echo
     fi
 
-    # Caddy
     if caddy::is_installed; then
         if ui::confirm "检测到 ${BLUE}Caddy${PLAIN}，是否卸载?"; then
             caddy::uninstall
@@ -86,7 +83,6 @@ self::uninstall() {
         echo
     fi
 
-    # Docker
     if docker::is_installed; then
         if ui::confirm "检测到 ${BLUE}Docker${PLAIN}，是否卸载?"; then
             docker::uninstall
@@ -96,7 +92,6 @@ self::uninstall() {
         echo
     fi
 
-    # UFW
     if ufw::is_installed; then
         if ui::confirm "检测到 ${BLUE}UFW${PLAIN}，是否卸载? (将丢失所有防火墙规则)"; then
             ufw::uninstall
@@ -106,7 +101,6 @@ self::uninstall() {
         echo
     fi
 
-    # 伪装站点
     if [[ -d "$CAMOUFLAGE_WEB_ROOT" || -f "$OPENLIST_DIR/docker-compose.yml" ]]; then
         if ui::confirm "检测到 ${BLUE}伪装站点${PLAIN}，是否卸载?"; then
             camouflage::uninstall
@@ -116,7 +110,6 @@ self::uninstall() {
         echo
     fi
 
-    # 脚本本体
     echo -e "是否删除 ${BLUE}本管理脚本 ($SCRIPT_NAME)${PLAIN} 及缓存文件？"
     if ui::confirm "请输入"; then
         [[ -f "$INSTALL_PATH" ]] && rm -f "$INSTALL_PATH" && log::info "脚本文件已删除: $INSTALL_PATH"

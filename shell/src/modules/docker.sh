@@ -50,9 +50,7 @@ docker::install() {
     fi
 }
 
-# 卸载策略：
-#   1. 先确认基本卸载（包+源+密钥+/etc/docker）
-#   2. 再单独二次确认是否清空 /var/lib/docker、/var/lib/containerd（镜像/卷/容器数据，可能数十 GB）
+# /var/lib/docker 与 /var/lib/containerd 含镜像/卷/容器数据，单独二次确认
 docker::uninstall() {
     if ! docker::is_installed; then
         log::warn "Docker 未安装"
