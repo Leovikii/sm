@@ -252,6 +252,29 @@ camouflage::run_cert_sync_now() {
     "$CERT_SYNC_SCRIPT" 2>&1 | sed 's/^/  /' || true
 }
 
+# 等待 Caddy 申请到指定域名的证书（默认最多 60 秒），然后立即触发一次同步
+# Caddy reload 后异步申请证书，通常 5-30 秒到位；超时仍未到位也不报错（依赖每日 timer 兜底）
+camouflage::wait_and_sync_cert() {
+    local domain="$1" timeout="${2:-60}"
+    local cert_root="${XDG_DATA_HOME:-/var/lib/caddy/.local/share}/caddy/certificates"
+    local i=0 found=""
+
+    log::step "等待 Caddy 申请 ${domain} 证书 (最多 ${timeout} 秒)..."
+    while (( i < timeout )); do
+        found=$(find "$cert_root" -type f -name "${domain}.crt" 2>/dev/null | head -n1)
+        if [[ -n "$found" && -s "$found" ]]; then
+            log::info "Caddy 已拿到证书"
+            camouflage::run_cert_sync_now
+            return 0
+        fi
+        sleep 2
+        i=$((i + 2))
+    done
+    log::warn "在 ${timeout} 秒内未检测到证书，将依赖每日 timer 自动同步"
+    log::info "如已确认 Caddy 申请成功，可手动: systemctl start sm-cert-sync.service"
+    return 1
+}
+
 # 抓取首次启动 (config.json 不存在时) 打印的初始管理员密码
 # 已设置过密码的容器抓不到（容器看到 config 直接读取，不再打印）
 camouflage::wait_openlist_password() {
@@ -331,10 +354,8 @@ camouflage::install_static() {
 
     echo
     log::info "✅ 静态伪装就绪: https://${domain}"
-    log::info "   首次访问该域名时 Caddy 会自动申请证书"
-    log::info "   证书将由 sm-cert-sync.timer 每天同步到 ${SB_CERT_DIR}/active.{crt,key}"
-    log::info "   想立即同步: systemctl start sm-cert-sync.service"
     log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
+    camouflage::wait_and_sync_cert "$domain"
 }
 
 camouflage::install_openlist() {
@@ -401,7 +422,7 @@ EOF
     log::info "✅ OpenList 伪装就绪: https://${domain}"
     log::info "   OpenList 数据: ${OPENLIST_DIR}/data"
     log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
-    log::info "   证书将由 sm-cert-sync.timer 每天同步；想立即同步: systemctl start sm-cert-sync.service"
+    camouflage::wait_and_sync_cert "$domain"
 
     # 抓取首次启动时打印的初始密码（已设置过密码的容器抓不到，正常）
     log::step "等待 OpenList 初始化输出默认密码 (最多 30 秒)..."
