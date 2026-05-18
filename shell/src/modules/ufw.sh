@@ -140,11 +140,15 @@ ufw::add_rule_interactive() {
     ui::prompt "请输入端口/协议 (如 2222/tcp): " input
 
     if [[ ! "$input" =~ ^([0-9]+)/(tcp|udp)$ ]]; then
-        log::err "格式错误，请使用 端口/协议 格式"
+        log::err "格式错误，请使用 端口/协议 格式（输入: $input）"
         return 1
     fi
     local port="${BASH_REMATCH[1]}"
     local proto="${BASH_REMATCH[2]}"
+    if (( port < 1 || port > 65535 )); then
+        log::err "端口必须在 1-65535 范围内（输入: $port）"
+        return 1
+    fi
     local other="udp"
     [[ "$proto" == "udp" ]] && other="tcp"
 
