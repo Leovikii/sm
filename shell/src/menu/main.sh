@@ -30,7 +30,7 @@ menu::main() {
         echo -e "  ${GREEN}6.${PLAIN} 安装常用软件 (Caddy / Docker)"
         echo -e "  ${GREEN}7.${PLAIN} UFW 防火墙管理"
         echo -e "  ${GREEN}8.${PLAIN} 系统 TCP 网络优化"
-        echo -e "  ${GREEN}9.${PLAIN} 安装伪装 (静态站 / OpenList)"
+        echo -e "  ${GREEN}9.${PLAIN} nftables 黑名单 (trick77/nftables-blacklist)"
         ui::divider
         echo -e "  ${GREEN}10.${PLAIN} 检查并更新管理脚本"
         echo -e "  ${GREEN}11.${PLAIN} 卸载脚本 (可选卸载所有组件)"
@@ -49,7 +49,7 @@ menu::main() {
             6)  menu::common_software ;;
             7)  menu::ufw ;;
             8)  tcp::run ;;
-            9)  menu::camouflage ;;
+            9)  menu::nftbl ;;
             10) self::check_update "$@" ;;
             11) self::uninstall ;;
             0)  exit 0 ;;

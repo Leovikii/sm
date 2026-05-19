@@ -12,22 +12,12 @@ set -uo pipefail
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.0.2"
+SCRIPT_VERSION="3.1.0"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
 DEFAULT_CONFIG_URL="https://example.com/config.json"
 TCPX_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcpx.sh"
-
-STATIC_SITE_URL="https://html5up.net/massively/download"
-CAMOUFLAGE_WEB_ROOT="/var/www/sm-camouflage"
-OPENLIST_DIR="/opt/openlist"
-
-# AnyTLS 证书同步目录：所有服务器统一使用 active.{crt,key}
-SB_CERT_DIR="/etc/sing-box/certs"
-CERT_SYNC_SCRIPT="/usr/local/bin/sm-cert-sync.sh"
-CERT_SYNC_SERVICE="/etc/systemd/system/sm-cert-sync.service"
-CERT_SYNC_TIMER="/etc/systemd/system/sm-cert-sync.timer"
 
 # 用 $'...' 在赋值时就把 \033 解析成真 ESC 字节，
 # 让 read -p / printf "%s" 等不解析转义的场景也能正常带色
@@ -372,11 +362,11 @@ self::uninstall() {
         echo
     fi
 
-    if [[ -d "$CAMOUFLAGE_WEB_ROOT" || -f "$OPENLIST_DIR/docker-compose.yml" ]]; then
-        if ui::confirm "检测到 ${BLUE}伪装站点${PLAIN}，是否卸载?"; then
-            camouflage::uninstall
+    if nftbl::is_installed; then
+        if ui::confirm "检测到 ${BLUE}nftables 黑名单${PLAIN}，是否卸载?"; then
+            nftbl::uninstall
         else
-            log::info "已保留伪装站点"
+            log::info "已保留 nftables 黑名单"
         fi
         echo
     fi
@@ -465,564 +455,6 @@ caddy::uninstall() {
 
     pkg::autoremove >/dev/null 2>&1
     log::info "Caddy 已卸载"
-}
-
-# >>> src/modules/camouflage.sh
-# ==============================================================================
-# camouflage:: 伪装站点 + AnyTLS 证书统一同步
-# 通过 systemd timer 每天扫描 Caddy 证书目录，同步到 /etc/sing-box/certs/
-# 维护 active.{crt,key} 软链接，让所有服务器 AnyTLS 配置统一指向 active.*
-# ==============================================================================
-
-CADDY_MAIN_CONF="/etc/caddy/Caddyfile"
-CADDY_SITES_DIR="/etc/caddy/sites.d"
-ACTIVE_DOMAIN_FILE="${SB_CERT_DIR}/.active-domain"
-
-# Caddy 进程以 caddy 用户运行；写入配置后必须确保 caddy 可读
-# 否则 systemctl reload caddy 会报 "permission denied"
-camouflage::_fix_caddy_perms() {
-    local target="$1"
-    chmod 0644 "$target" 2>/dev/null || true
-    chown root:caddy "$target" 2>/dev/null || true
-}
-
-# active-domain 文件管理（决定 AnyTLS 用哪张证书）
-camouflage::read_active_domain() {
-    [[ -f "$ACTIVE_DOMAIN_FILE" ]] && cat "$ACTIVE_DOMAIN_FILE" 2>/dev/null || echo ""
-}
-
-camouflage::set_active_domain() {
-    local domain="$1"
-    mkdir -p "$SB_CERT_DIR"
-    echo "$domain" > "$ACTIVE_DOMAIN_FILE"
-    chmod 0644 "$ACTIVE_DOMAIN_FILE"
-    log::info "AnyTLS 活动域名设为: $domain"
-
-    # 立即把已存在的证书链接刷新一下
-    if [[ -f "$SB_CERT_DIR/$domain.crt" ]]; then
-        ln -sfn "$domain.crt" "$SB_CERT_DIR/active.crt"
-        ln -sfn "$domain.key" "$SB_CERT_DIR/active.key"
-        log::info "active.{crt,key} 已指向 $domain"
-    else
-        log::warn "$domain 的证书还未同步过，等下次 Caddy 续签后会自动指向"
-    fi
-}
-
-# 部署伪装时调用：用户输入的域名就是 AnyTLS 要用的域名
-#   - 首次部署：静默自动绑定为 active
-#   - 重装同域名：什么都不做
-#   - 冲突（已有 active 但本次域名不同）：询问是否切换
-camouflage::bind_active_domain() {
-    local domain="$1"
-    local current
-    current="$(camouflage::read_active_domain)"
-
-    if [[ -z "$current" ]]; then
-        camouflage::set_active_domain "$domain"
-        return
-    fi
-    [[ "$current" == "$domain" ]] && return
-
-    log::warn "当前 AnyTLS active 域名: $current"
-    if ui::confirm "是否切换到本次部署的 $domain ?"; then
-        camouflage::set_active_domain "$domain"
-    else
-        log::info "保持 active=$current ($domain 证书仍会被同步，但不动 active 软链接)"
-    fi
-}
-
-camouflage::ensure_caddy() {
-    caddy::is_installed && return 0
-    log::info "伪装功能需要 Caddy，开始自动安装..."
-    caddy::install
-    caddy::is_installed || { log::err "Caddy 安装失败，无法继续。"; return 1; }
-}
-
-camouflage::ensure_docker() {
-    docker::is_installed && return 0
-    log::info "OpenList 伪装需要 Docker，开始自动安装..."
-    docker::install
-    docker::is_installed || { log::err "Docker 安装失败，无法继续。"; return 1; }
-}
-
-# 询问域名（必填，格式校验 + DNS 解析校验）
-camouflage::_ask_domain() {
-    local var="$1" prompt="${2:-请输入指向本机的域名: }" val=""
-    while [[ -z "$val" ]]; do
-        ui::prompt "$prompt" val
-        if [[ ! "$val" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$ ]]; then
-            log::err "域名格式不正确，请重新输入"
-            val=""
-            continue
-        fi
-        if ! camouflage::_verify_domain_dns "$val"; then
-            val=""
-        fi
-    done
-    printf -v "$var" '%s' "$val"
-}
-
-# 拉本机公网 IP（IPv4 + IPv6 任一）
-camouflage::_my_public_ips() {
-    local v4 v6
-    v4=$(curl -fsS4 --max-time 4 https://api.ipify.org 2>/dev/null || true)
-    v6=$(curl -fsS6 --max-time 4 https://api64.ipify.org 2>/dev/null || true)
-    [[ -n "$v4" ]] && echo "$v4"
-    [[ -n "$v6" ]] && echo "$v6"
-}
-
-# 校验域名是否解析到本机公网 IP
-# 返回 0 = 通过（匹配，或用户选择强制继续）；1 = 用户取消
-camouflage::_verify_domain_dns() {
-    local domain="$1"
-    log::step "校验域名解析: $domain"
-
-    local resolved my_ips matched=0
-    # getent ahosts 一次返回 v4+v6 解析结果
-    resolved=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u)
-    my_ips=$(camouflage::_my_public_ips)
-
-    if [[ -z "$resolved" ]]; then
-        log::warn "无法解析 $domain（DNS 故障或域名未生效）"
-        ui::confirm "是否仍然继续? (用于内网测试 / DNS 未生效场景)"
-        return $?
-    fi
-    if [[ -z "$my_ips" ]]; then
-        log::warn "获取本机公网 IP 失败（网络异常或防火墙拦截 ipify）"
-        log::info "解析到的 IP:"; echo "$resolved" | sed 's/^/    /'
-        ui::confirm "无法验证，是否仍然继续?"
-        return $?
-    fi
-
-    # 任一交集即视为匹配
-    while IFS= read -r ip; do
-        [[ -z "$ip" ]] && continue
-        if echo "$resolved" | grep -qx "$ip"; then
-            matched=1
-            break
-        fi
-    done <<< "$my_ips"
-
-    if [[ $matched -eq 1 ]]; then
-        log::info "域名解析正确 ✓"
-        return 0
-    fi
-
-    log::warn "域名 $domain 未解析到本机公网 IP"
-    log::info "  本机公网 IP:"; echo "$my_ips"  | sed 's/^/    /'
-    log::info "  域名解析到:";   echo "$resolved" | sed 's/^/    /'
-    log::info "  CDN / 反代后端场景下解析必然不一致，可强制继续"
-    ui::confirm "是否仍然继续?"
-}
-
-# 写出 cert-sync 脚本 + systemd timer。幂等。
-# 不依赖 caddy events 模块（官方包不带 exec handler，那是第三方插件）。
-# 改用 systemd timer 每天扫描 caddy 证书目录 → 同步到 SB_CERT_DIR
-camouflage::install_cert_hook() {
-    log::step "安装证书同步脚本与 systemd timer..."
-
-    mkdir -p "$SB_CERT_DIR"
-    chmod 0755 "$SB_CERT_DIR"
-
-    cat > "$CERT_SYNC_SCRIPT" <<'SYNC_EOF'
-#!/bin/bash
-# sm-cert-sync.sh - 扫 caddy 证书目录，同步所有 .crt/.key 到 /etc/sing-box/certs
-# 维护 active.{crt,key} 软链接（指向 .active-domain 文件里记录的域名）
-set -uo pipefail
-
-DEST="/etc/sing-box/certs"
-ACTIVE_FILE="$DEST/.active-domain"
-CADDY_DATA="${XDG_DATA_HOME:-/var/lib/caddy/.local/share}/caddy"
-CERT_ROOT="$CADDY_DATA/certificates"
-
-mkdir -p "$DEST"
-[[ -d "$CERT_ROOT" ]] || { echo "[cert-sync] caddy 证书目录不存在: $CERT_ROOT" >&2; exit 0; }
-
-# 遍历 CA 子目录下的所有域名子目录，复制 .crt/.key
-# 用 cp -u（仅当 src 比 dest 新才复制）避免无谓 mtime 触动，
-# 防止 sing-box 误以为证书变化而重载
-shopt -s nullglob
-synced=0
-for ca_dir in "$CERT_ROOT"/*/; do
-    for d in "$ca_dir"*/; do
-        domain=$(basename "$d")
-        crt="$d$domain.crt"
-        key="$d$domain.key"
-        [[ -s "$crt" && -s "$key" ]] || continue
-        cp -u "$crt" "$DEST/$domain.crt"
-        cp -u "$key" "$DEST/$domain.key"
-        chmod 0644 "$DEST/$domain.crt"
-        chmod 0640 "$DEST/$domain.key"
-        synced=$((synced + 1))
-    done
-done
-
-[[ $synced -eq 0 ]] && { echo "[cert-sync] 无证书可同步（caddy 还没拿到任何证书）" >&2; exit 0; }
-
-# 维护 active 软链接：以 .active-domain 文件里记录的域名为准
-# 若文件不存在，挑一个已同步的域名作为 active（首次部署兜底）
-ACTIVE_DOMAIN=""
-[[ -f "$ACTIVE_FILE" ]] && ACTIVE_DOMAIN="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
-if [[ -z "$ACTIVE_DOMAIN" || ! -f "$DEST/$ACTIVE_DOMAIN.crt" ]]; then
-    ACTIVE_DOMAIN=$(ls "$DEST"/*.crt 2>/dev/null | grep -v '/active.crt$' | head -n1 | xargs -r basename | sed 's/\.crt$//')
-    [[ -n "$ACTIVE_DOMAIN" ]] && echo "$ACTIVE_DOMAIN" > "$ACTIVE_FILE"
-fi
-if [[ -n "$ACTIVE_DOMAIN" && -f "$DEST/$ACTIVE_DOMAIN.crt" ]]; then
-    ln -sfn "$ACTIVE_DOMAIN.crt" "$DEST/active.crt"
-    ln -sfn "$ACTIVE_DOMAIN.key" "$DEST/active.key"
-fi
-echo "[cert-sync] synced=$synced active=$ACTIVE_DOMAIN"
-SYNC_EOF
-    chmod +x "$CERT_SYNC_SCRIPT"
-
-    # systemd service：单次 oneshot 跑同步脚本
-    cat > "$CERT_SYNC_SERVICE" <<EOF
-[Unit]
-Description=sm cert sync (Caddy -> sing-box)
-
-[Service]
-Type=oneshot
-ExecStart=${CERT_SYNC_SCRIPT}
-EOF
-
-    # systemd timer：开机后 2 分钟跑一次，之后每天跑一次
-    # （Caddy 续签 60 天频率，旧证书还有 30 天，每天扫一次足够；
-    # cp -u 跳过未变化的文件，无谓重载也已避免）
-    cat > "$CERT_SYNC_TIMER" <<EOF
-[Unit]
-Description=sm cert sync timer
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=1d
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable --now sm-cert-sync.timer >/dev/null 2>&1
-    log::info "证书同步 timer 已启用 (每日扫描一次)"
-
-    # 自动 import sites.d
-    mkdir -p "$CADDY_SITES_DIR"
-    chown root:caddy "$CADDY_SITES_DIR" 2>/dev/null || true
-    chmod 0755 "$CADDY_SITES_DIR" 2>/dev/null || true
-    if [[ -f "$CADDY_MAIN_CONF" ]] && ! grep -q "import ${CADDY_SITES_DIR}/" "$CADDY_MAIN_CONF" 2>/dev/null; then
-        echo "" >> "$CADDY_MAIN_CONF"
-        echo "import ${CADDY_SITES_DIR}/*.caddy" >> "$CADDY_MAIN_CONF"
-        camouflage::_fix_caddy_perms "$CADDY_MAIN_CONF"
-    fi
-}
-
-# 立即跑一次同步（伪装部署完毕、Caddy 启动并拿到首张证书后调用）
-camouflage::run_cert_sync_now() {
-    [[ -x "$CERT_SYNC_SCRIPT" ]] || return 0
-    "$CERT_SYNC_SCRIPT" 2>&1 | sed 's/^/  /' || true
-}
-
-# 等待 Caddy 申请到指定域名的证书（默认最多 60 秒），然后立即触发一次同步
-# Caddy reload 后异步申请证书，通常 5-30 秒到位；超时仍未到位也不报错（依赖每日 timer 兜底）
-camouflage::wait_and_sync_cert() {
-    local domain="$1" timeout="${2:-60}"
-    local cert_root="${XDG_DATA_HOME:-/var/lib/caddy/.local/share}/caddy/certificates"
-    local i=0 found=""
-
-    log::step "等待 Caddy 申请 ${domain} 证书 (最多 ${timeout} 秒)..."
-    while (( i < timeout )); do
-        found=$(find "$cert_root" -type f -name "${domain}.crt" 2>/dev/null | head -n1)
-        if [[ -n "$found" && -s "$found" ]]; then
-            log::info "Caddy 已拿到证书"
-            camouflage::run_cert_sync_now
-            return 0
-        fi
-        sleep 2
-        i=$((i + 2))
-    done
-    log::warn "在 ${timeout} 秒内未检测到证书，将依赖每日 timer 自动同步"
-    log::info "如已确认 Caddy 申请成功，可手动: systemctl start sm-cert-sync.service"
-    return 1
-}
-
-# 抓取首次启动 (config.json 不存在时) 打印的初始管理员密码
-# 已设置过密码的容器抓不到（容器看到 config 直接读取，不再打印）
-camouflage::wait_openlist_password() {
-    local container="${1:-openlist}"
-    local timeout="${2:-30}"
-    local pattern="initial password is:"
-    local i=0 line=""
-
-    while (( i < timeout )); do
-        line=$(docker logs "$container" 2>&1 | grep -m1 "$pattern" || true)
-        [[ -n "$line" ]] && break
-        sleep 1
-        i=$((i + 1))
-    done
-
-    if [[ -z "$line" ]]; then
-        return 1
-    fi
-    # "... initial password is: PWD" -> PWD
-    echo "${line##*initial password is: }"
-}
-
-# camouflage::_write_site DOMAIN BODY
-camouflage::_write_site() {
-    local domain="$1" body="$2"
-    mkdir -p "$CADDY_SITES_DIR"
-    cat > "$CADDY_SITES_DIR/${domain}.caddy" <<EOF
-${domain} {
-${body}
-}
-EOF
-    camouflage::_fix_caddy_perms "$CADDY_SITES_DIR/${domain}.caddy"
-}
-
-camouflage::install_static() {
-    camouflage::ensure_caddy || return 1
-
-    local domain
-    camouflage::_ask_domain domain "请输入指向本机的域名 (用于静态伪装): "
-
-    log::step "下载静态伪装站点 (html5up Massively)..."
-    mkdir -p "$CAMOUFLAGE_WEB_ROOT"
-    local tmp_zip="$TMP_DIR/massively.zip"
-    mkdir -p "$TMP_DIR"
-    if ! net::download "$STATIC_SITE_URL" "$tmp_zip"; then
-        log::err "静态站点下载失败"
-        return 1
-    fi
-    if ! sys::has_cmd unzip; then
-        pkg::install_quiet unzip || { log::err "unzip 安装失败"; return 1; }
-    fi
-    if ! unzip -oq "$tmp_zip" -d "$CAMOUFLAGE_WEB_ROOT"; then
-        log::err "静态站点解压失败"
-        return 1
-    fi
-    chown -R caddy:caddy "$CAMOUFLAGE_WEB_ROOT" 2>/dev/null || true
-    log::info "静态站点已部署到 $CAMOUFLAGE_WEB_ROOT"
-
-    camouflage::install_cert_hook
-
-    camouflage::_write_site "$domain" "    root * ${CAMOUFLAGE_WEB_ROOT}
-    encode gzip
-    file_server
-    log {
-        output discard
-    }"
-    log::info "Caddy 站点配置已写入: $CADDY_SITES_DIR/${domain}.caddy"
-
-    log::step "重载 Caddy..."
-    if svc::is_active caddy; then
-        systemctl reload caddy && log::info "Caddy 已重载"
-    else
-        svc::ensure_running caddy "Caddy 已启动"
-    fi
-
-    camouflage::bind_active_domain "$domain"
-
-    echo
-    log::info "✅ 静态伪装就绪: https://${domain}"
-    log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
-    camouflage::wait_and_sync_cert "$domain"
-}
-
-camouflage::install_openlist() {
-    camouflage::ensure_caddy || return 1
-    camouflage::ensure_docker || return 1
-
-    local domain
-    camouflage::_ask_domain domain "请输入指向本机的域名 (用于 OpenList): "
-
-    log::step "准备 OpenList 部署目录..."
-    mkdir -p "$OPENLIST_DIR/data"
-
-    cat > "$OPENLIST_DIR/docker-compose.yml" <<EOF
-services:
-  openlist:
-    image: openlistteam/openlist:latest
-    container_name: openlist
-    user: "0:0"
-    volumes:
-      - ${OPENLIST_DIR}/data:/opt/openlist/data
-    ports:
-      - 127.0.0.1:5244:5244
-    environment:
-      - UMASK=022
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
-    restart: unless-stopped
-
-  watchtower:
-    image: nickfedor/watchtower:latest
-    container_name: openlist-watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_LABEL_ENABLE=true
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_SCHEDULE=0 0 4 1 * *
-    restart: unless-stopped
-EOF
-
-    log::step "拉起 OpenList..."
-    (cd "$OPENLIST_DIR" && docker compose up -d) || {
-        log::err "docker compose 启动失败"; return 1; }
-
-    camouflage::install_cert_hook
-
-    camouflage::_write_site "$domain" "    encode gzip
-    reverse_proxy 127.0.0.1:5244
-    log {
-        output discard
-    }"
-    log::info "Caddy 站点配置已写入: $CADDY_SITES_DIR/${domain}.caddy"
-
-    log::step "重载 Caddy..."
-    if svc::is_active caddy; then
-        systemctl reload caddy && log::info "Caddy 已重载"
-    else
-        svc::ensure_running caddy "Caddy 已启动"
-    fi
-
-    camouflage::bind_active_domain "$domain"
-
-    echo
-    log::info "✅ OpenList 伪装就绪: https://${domain}"
-    log::info "   OpenList 数据: ${OPENLIST_DIR}/data"
-    log::info "   AnyTLS 活动域名: $(camouflage::read_active_domain)"
-    camouflage::wait_and_sync_cert "$domain"
-
-    # 抓取首次启动时打印的初始密码（已设置过密码的容器抓不到，正常）
-    log::step "等待 OpenList 初始化输出默认密码 (最多 30 秒)..."
-    local pwd
-    if pwd=$(camouflage::wait_openlist_password openlist 30); then
-        echo
-        echo -e "  ${GREEN}━━━ OpenList 初始管理员凭证 ━━━${PLAIN}"
-        echo -e "  地址  : ${BLUE}https://${domain}${PLAIN}"
-        echo -e "  用户名: ${BLUE}admin${PLAIN}"
-        echo -e "  密码  : ${YELLOW}${pwd}${PLAIN}"
-        echo -e "  ${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
-        log::warn "请尽快登录 https://${domain} 修改默认密码"
-    else
-        log::warn "30 秒内未抓到默认密码"
-        log::info "可能原因：容器初始化较慢，或 ${OPENLIST_DIR}/data 已存在数据（密码已修改过）"
-        log::info "可手动查看完整日志: docker logs openlist | grep -i password"
-    fi
-}
-
-camouflage::status_text() {
-    local has_static=0 has_openlist=0
-    [[ -d "$CAMOUFLAGE_WEB_ROOT" ]] && has_static=1
-    [[ -f "$OPENLIST_DIR/docker-compose.yml" ]] && has_openlist=1
-    if [[ $has_static -eq 0 && $has_openlist -eq 0 ]]; then
-        echo -e "${YELLOW}未部署${PLAIN}"
-    else
-        local parts=()
-        [[ $has_static   -eq 1 ]] && parts+=("静态")
-        [[ $has_openlist -eq 1 ]] && parts+=("OpenList")
-        local active
-        active="$(camouflage::read_active_domain)"
-        if [[ -n "$active" ]]; then
-            echo -e "${GREEN}已部署: ${parts[*]}${PLAIN} | active: ${BLUE}${active}${PLAIN}"
-        else
-            echo -e "${GREEN}已部署: ${parts[*]}${PLAIN}"
-        fi
-    fi
-}
-
-# 列出已同步的所有证书域名
-camouflage::list_synced_domains() {
-    local f
-    for f in "$SB_CERT_DIR"/*.crt; do
-        [[ -e "$f" ]] || continue
-        local name
-        name="$(basename "$f" .crt)"
-        [[ "$name" == "active" ]] && continue
-        echo "$name"
-    done
-}
-
-# 交互切换 active 域名
-camouflage::switch_active() {
-    log::info "AnyTLS 活动域名决定 ${SB_CERT_DIR}/active.{crt,key} 软链接指向哪个证书。"
-    local current
-    current="$(camouflage::read_active_domain)"
-    [[ -n "$current" ]] && log::info "当前 active: ${current}" || log::warn "尚未设置 active 域名"
-
-    local domains=()
-    while IFS= read -r d; do
-        [[ -n "$d" ]] && domains+=("$d")
-    done < <(camouflage::list_synced_domains)
-
-    if [[ ${#domains[@]} -eq 0 ]]; then
-        log::err "尚未同步任何证书。请先访问伪装域名（让 Caddy 申请证书）。"
-        return 1
-    fi
-
-    echo
-    echo "已同步证书的域名："
-    local i=1
-    for d in "${domains[@]}"; do
-        if [[ "$d" == "$current" ]]; then
-            echo -e "  ${GREEN}${i}.${PLAIN} ${d}  ${GREEN}(当前 active)${PLAIN}"
-        else
-            echo -e "  ${GREEN}${i}.${PLAIN} ${d}"
-        fi
-        i=$((i + 1))
-    done
-    echo
-
-    local choice
-    ui::prompt "请选择新的 active 域名编号 (0 取消): " choice
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" == "0" ]]; then
-        log::info "已取消"
-        return
-    fi
-    if (( choice < 1 || choice > ${#domains[@]} )); then
-        log::err "无效编号"
-        return 1
-    fi
-    camouflage::set_active_domain "${domains[$((choice - 1))]}"
-}
-
-camouflage::uninstall() {
-    log::warn "即将清理伪装相关资源（站点文件、OpenList 容器、Caddy 站点配置、证书同步钩子）"
-    ui::confirm "确认?" || { log::info "取消"; return; }
-
-    # OpenList
-    if [[ -f "$OPENLIST_DIR/docker-compose.yml" ]]; then
-        log::step "停止 OpenList..."
-        (cd "$OPENLIST_DIR" && docker compose down) 2>/dev/null || true
-        if ui::confirm "是否删除 OpenList 数据目录 $OPENLIST_DIR ?"; then
-            rm -rf "$OPENLIST_DIR"
-            log::info "OpenList 目录已删除"
-        fi
-    fi
-
-    # 静态站点
-    [[ -d "$CAMOUFLAGE_WEB_ROOT" ]] && rm -rf "$CAMOUFLAGE_WEB_ROOT" && log::info "静态站点目录已删除"
-
-    # Caddy sites
-    if [[ -d "$CADDY_SITES_DIR" ]]; then
-        rm -f "$CADDY_SITES_DIR"/*.caddy
-        log::info "Caddy 站点配置已清理"
-        svc::is_active caddy && systemctl reload caddy 2>/dev/null
-    fi
-
-    rm -f "$CERT_SYNC_SCRIPT"
-    log::info "证书同步脚本已删除"
-
-    systemctl disable --now sm-cert-sync.timer >/dev/null 2>&1 || true
-    rm -f "$CERT_SYNC_TIMER" "$CERT_SYNC_SERVICE"
-    systemctl daemon-reload
-    log::info "证书同步 timer/service 已清理"
-
-    rm -f "$ACTIVE_DOMAIN_FILE"
-    log::warn "证书目录 $SB_CERT_DIR 已保留 (sing-box 仍在使用)。如需清理请手动 rm -rf"
-
-    log::info "伪装功能已卸载"
 }
 
 # >>> src/modules/docker.sh
@@ -1118,6 +550,226 @@ docker::uninstall() {
 
     pkg::autoremove >/dev/null 2>&1
     log::info "Docker 已卸载"
+}
+
+# >>> src/modules/nftbl.sh
+# ==============================================================================
+# nftbl:: nftables 黑名单 (trick77/nftables-blacklist)
+# 部署官方 update-blacklist.sh + 每月自动更新 timer
+# 卸载时只清理脚本自动生成的资源，绝不动用户编辑过的配置
+# ==============================================================================
+
+NFTBL_SCRIPT_PATH="/usr/local/sbin/update-blacklist.sh"
+NFTBL_CONF_DIR="/etc/nftables-blacklist"
+NFTBL_CONF_FILE="${NFTBL_CONF_DIR}/nftables-blacklist.conf"
+NFTBL_TIMER="/etc/systemd/system/sm-nftbl-update.timer"
+NFTBL_SERVICE="/etc/systemd/system/sm-nftbl-update.service"
+NFTBL_TIMER_NAME="sm-nftbl-update.timer"
+NFTBL_SERVICE_NAME="sm-nftbl-update.service"
+NFTBL_SCRIPT_URL="https://raw.githubusercontent.com/trick77/nftables-blacklist/master/update-blacklist.sh"
+NFTBL_CONF_URL="https://raw.githubusercontent.com/trick77/nftables-blacklist/master/nftables-blacklist.conf"
+
+nftbl::is_installed() { [[ -x "$NFTBL_SCRIPT_PATH" ]]; }
+
+nftbl::table_exists() {
+    sys::has_cmd nft && nft list table inet blacklist >/dev/null 2>&1
+}
+
+nftbl::status_text() {
+    if ! nftbl::is_installed; then
+        echo -e "${RED}未安装${PLAIN}"
+    elif nftbl::table_exists; then
+        echo -e "${GREEN}已部署${PLAIN}"
+    else
+        echo -e "${YELLOW}已安装(规则未加载)${PLAIN}"
+    fi
+}
+
+nftbl::_require() {
+    if ! nftbl::is_installed; then
+        log::err "nftables 黑名单未安装，请先执行安装"
+        return 1
+    fi
+}
+
+nftbl::install() {
+    if nftbl::is_installed; then
+        log::warn "已检测到 ${NFTBL_SCRIPT_PATH}"
+        ui::confirm "是否覆盖重装?" || { log::info "已取消"; return; }
+    fi
+
+    log::step "[1/6] 安装依赖 (curl / iprange / nftables)..."
+    pkg::update quiet
+    if ! pkg::install_quiet curl iprange nftables; then
+        log::warn "依赖静默安装失败，重试 verbose 模式..."
+        pkg::install curl iprange nftables || { log::err "依赖安装失败"; return 1; }
+    fi
+
+    log::step "[2/6] 下载 update-blacklist.sh..."
+    if ! net::download "$NFTBL_SCRIPT_URL" "$NFTBL_SCRIPT_PATH"; then
+        log::err "更新脚本下载失败"
+        rm -f "$NFTBL_SCRIPT_PATH"
+        return 1
+    fi
+    chmod +x "$NFTBL_SCRIPT_PATH"
+
+    log::step "[3/6] 准备配置文件..."
+    mkdir -p "$NFTBL_CONF_DIR"
+    if [[ -f "$NFTBL_CONF_FILE" ]]; then
+        log::info "已存在 ${NFTBL_CONF_FILE}，保留用户配置不覆盖"
+    else
+        if ! net::download "$NFTBL_CONF_URL" "$NFTBL_CONF_FILE"; then
+            log::err "默认配置下载失败"
+            return 1
+        fi
+        log::info "默认配置已下载到 ${NFTBL_CONF_FILE}"
+    fi
+
+    log::step "[4/6] 立即跑一次 update-blacklist.sh..."
+    if ! "$NFTBL_SCRIPT_PATH" "$NFTBL_CONF_FILE"; then
+        log::warn "首次执行返回非 0，可能源 IP 列表当前不可达，可稍后通过菜单重试"
+    fi
+
+    log::step "[5/6] 写入 systemd service / timer..."
+    cat > "$NFTBL_SERVICE" <<EOF
+[Unit]
+Description=sm nftables blacklist update (trick77)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${NFTBL_SCRIPT_PATH} ${NFTBL_CONF_FILE}
+EOF
+
+    cat > "$NFTBL_TIMER" <<EOF
+[Unit]
+Description=sm nftables blacklist monthly update timer
+
+[Timer]
+OnCalendar=monthly
+RandomizedDelaySec=1h
+Persistent=true
+Unit=${NFTBL_SERVICE_NAME}
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    log::step "[6/6] 启用每月自动更新 timer..."
+    systemctl daemon-reload
+    if systemctl enable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1; then
+        log::info "${NFTBL_TIMER_NAME} 已启用 (每月自动更新)"
+    else
+        log::err "timer 启用失败，请手动检查 systemctl status ${NFTBL_TIMER_NAME}"
+    fi
+
+    echo
+    log::info "✅ nftables 黑名单部署完成"
+    log::info "  脚本    : ${NFTBL_SCRIPT_PATH}"
+    log::info "  配置    : ${NFTBL_CONF_FILE}"
+    log::info "  自动更新: 每月一次 (${NFTBL_TIMER_NAME})"
+    if nftbl::table_exists; then
+        local v4 v6
+        v4=$(nft list set inet blacklist blacklist4 2>/dev/null | grep -c '^\s*[0-9]')
+        v6=$(nft list set inet blacklist blacklist6 2>/dev/null | grep -c '^\s*[a-fA-F0-9]')
+        log::info "  当前规则: IPv4≈${v4} 行 / IPv6≈${v6} 行"
+    fi
+    log::info "  下次触发: $(systemctl list-timers ${NFTBL_TIMER_NAME} 2>/dev/null | awk 'NR==2 {print $1, $2}')"
+}
+
+nftbl::update_now() {
+    nftbl::_require || return
+    log::step "运行 update-blacklist.sh..."
+    if "$NFTBL_SCRIPT_PATH" "$NFTBL_CONF_FILE"; then
+        log::info "黑名单更新完成"
+    else
+        log::err "更新失败 (退出码 $?)"
+        return 1
+    fi
+}
+
+nftbl::edit_config() {
+    nftbl::_require || return
+    if [[ ! -f "$NFTBL_CONF_FILE" ]]; then
+        log::err "配置文件不存在: $NFTBL_CONF_FILE"
+        return 1
+    fi
+    local editor="${EDITOR:-}"
+    if [[ -z "$editor" ]]; then
+        if sys::has_cmd nano; then editor=nano
+        elif sys::has_cmd vim; then editor=vim
+        elif sys::has_cmd vi;  then editor=vi
+        else
+            log::err "未找到可用编辑器 (nano/vim/vi)，请手动编辑 ${NFTBL_CONF_FILE}"
+            return 1
+        fi
+    fi
+    "$editor" "$NFTBL_CONF_FILE"
+    if ui::confirm "是否立即重新应用配置?"; then
+        nftbl::update_now
+    fi
+}
+
+nftbl::show_status() {
+    if ! sys::has_cmd nft; then
+        log::err "nft 命令不可用，请先安装 nftables"
+        return 1
+    fi
+    if ! nftbl::table_exists; then
+        log::warn "inet blacklist 表不存在 (尚未运行过 update-blacklist.sh 或已被清理)"
+        return 1
+    fi
+
+    log::info "── 表 inet blacklist ──"
+    nft list table inet blacklist 2>/dev/null | head -n 40
+    echo
+    log::info "── IPv4 set (前 20 行) ──"
+    nft list set inet blacklist blacklist4 2>/dev/null | sed -n '1,20p'
+    echo
+    log::info "── IPv6 set (前 20 行) ──"
+    nft list set inet blacklist blacklist6 2>/dev/null | sed -n '1,20p'
+    echo
+    log::info "── input chain 计数器 ──"
+    nft list chain inet blacklist input 2>/dev/null
+    echo
+    log::info "── timer 下次触发 ──"
+    systemctl list-timers "$NFTBL_TIMER_NAME" 2>/dev/null | head -n 3
+}
+
+nftbl::uninstall() {
+    if ! nftbl::is_installed && [[ ! -f "$NFTBL_TIMER" && ! -f "$NFTBL_SERVICE" ]]; then
+        log::warn "nftables 黑名单未安装"
+        return
+    fi
+    log::warn "即将卸载 nftables 黑名单 (仅清理本脚本自动生成的资源)"
+    ui::confirm "确认卸载?" || { log::info "取消"; return; }
+
+    log::step "停用并删除 systemd timer/service..."
+    systemctl disable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1 || true
+    rm -f "$NFTBL_TIMER" "$NFTBL_SERVICE"
+    systemctl daemon-reload
+
+    log::step "清理 nft inet blacklist 表..."
+    if sys::has_cmd nft && nftbl::table_exists; then
+        nft delete table inet blacklist 2>/dev/null && log::info "nft 表已删除"
+    fi
+
+    log::step "删除 update-blacklist.sh..."
+    rm -f "$NFTBL_SCRIPT_PATH"
+
+    if [[ -d "$NFTBL_CONF_DIR" ]]; then
+        echo
+        log::warn "配置目录 ${NFTBL_CONF_DIR} 可能包含您手工编辑过的内容"
+        if ui::confirm "是否一并删除? (默认 N)"; then
+            rm -rf "$NFTBL_CONF_DIR"
+            log::info "${NFTBL_CONF_DIR} 已删除"
+        else
+            log::info "已保留 ${NFTBL_CONF_DIR}"
+        fi
+    fi
+
+    log::info "nftables 黑名单已卸载"
 }
 
 # >>> src/modules/sb.sh
@@ -1449,7 +1101,9 @@ ufw::delete_rule_interactive() {
     log::info "已选择规则: $rule_info"
 
     local target_def port proto other
-    target_def=$(echo "$rule_info" | awk '{print $2}')
+    # 跳过 "[ N]" 头部再取下一个 token；awk '{print $2}' 在编号 1-9
+    # ("[ 1]" 内含空格) 时会把 "1]" 当成 $2，造成解析失败
+    target_def=$(echo "$rule_info" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]+([^[:space:]]+).*/\1/')
     port=$(echo "$target_def" | cut -d'/' -f1)
     proto=$(echo "$target_def" | cut -d'/' -f2)
     if [[ -z "$port" || -z "$proto" || "$port" == "$target_def" ]]; then
@@ -1510,41 +1164,6 @@ ufw::delete_rule_interactive() {
     ufw::_status_numbered
 }
 
-# >>> src/menu/camouflage.sh
-# ==============================================================================
-# menu::camouflage - 伪装站点子菜单
-# ==============================================================================
-
-menu::camouflage() {
-    while true; do
-        ui::header "安装伪装"
-        echo -e " 当前状态: $(camouflage::status_text)"
-        echo
-        echo -e "  ${GREEN}1.${PLAIN} 安装静态伪装 (Caddy + html5up)"
-        echo -e "  ${GREEN}2.${PLAIN} 安装 OpenList 伪装 (Docker + Caddy 反代)"
-        echo -e "  ${GREEN}3.${PLAIN} 切换 AnyTLS 活动证书域名"
-        echo -e "  ${GREEN}4.${PLAIN} 卸载伪装"
-        echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
-        echo
-        echo -e " ${BLUE}提示${PLAIN}: AnyTLS 服务端配置统一指向 ${SB_CERT_DIR}/active.{crt,key}"
-        echo -e "       Caddy 给任何域名续签证书都会自动同步到此目录"
-        echo -e "       但只有 ${BLUE}活动域名${PLAIN} 决定 active.* 指向哪一张证书"
-        echo -e "       (这意味着你以后可以放心给 Caddy 加任意反代/站点)"
-        echo
-        local opt
-        ui::prompt " 请选择: " opt
-        case "$opt" in
-            1) camouflage::install_static ;;
-            2) camouflage::install_openlist ;;
-            3) camouflage::switch_active ;;
-            4) camouflage::uninstall ;;
-            0) return ;;
-            *) log::err "无效选项" ;;
-        esac
-        [[ "$opt" != "0" ]] && ui::pause
-    done
-}
-
 # >>> src/menu/common_software.sh
 # ==============================================================================
 # menu::common_software - 常用软件安装子菜单
@@ -1570,6 +1189,44 @@ menu::common_software() {
             3) caddy::install; docker::install ;;
             4) caddy::uninstall ;;
             5) docker::uninstall ;;
+            0) return ;;
+            *) log::err "无效选项" ;;
+        esac
+        [[ "$opt" != "0" ]] && ui::pause
+    done
+}
+
+# >>> src/menu/nftbl.sh
+# ==============================================================================
+# menu::nftbl - nftables 黑名单 (trick77/nftables-blacklist) 管理子菜单
+# ==============================================================================
+
+menu::nftbl() {
+    while true; do
+        ui::header "nftables 黑名单 (trick77)"
+        echo -e " 当前状态: $(nftbl::status_text)"
+        echo
+        echo -e "  ${GREEN}1.${PLAIN} 安装并启用 (含每月自动更新)"
+        echo -e "  ${GREEN}2.${PLAIN} 立即更新黑名单"
+        echo -e "  ${GREEN}3.${PLAIN} 编辑配置文件 (黑名单源列表)"
+        echo -e "  ${GREEN}4.${PLAIN} 查看状态 (nft 表 / IPv4·IPv6 set / 计数器)"
+        echo -e "  ${GREEN}5.${PLAIN} 卸载"
+        echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
+        echo
+        echo -e " ${BLUE}提示${PLAIN}: 自动生成资源:"
+        echo -e "       ${NFTBL_SCRIPT_PATH}"
+        echo -e "       ${NFTBL_TIMER}"
+        echo -e "       ${NFTBL_SERVICE}"
+        echo -e "       配置文件 ${NFTBL_CONF_FILE} 视为用户文件，卸载时仅询问"
+        echo
+        local opt
+        ui::prompt " 请选择: " opt
+        case "$opt" in
+            1) nftbl::install ;;
+            2) nftbl::update_now ;;
+            3) nftbl::edit_config ;;
+            4) nftbl::show_status ;;
+            5) nftbl::uninstall ;;
             0) return ;;
             *) log::err "无效选项" ;;
         esac
@@ -1717,7 +1374,7 @@ menu::main() {
         echo -e "  ${GREEN}6.${PLAIN} 安装常用软件 (Caddy / Docker)"
         echo -e "  ${GREEN}7.${PLAIN} UFW 防火墙管理"
         echo -e "  ${GREEN}8.${PLAIN} 系统 TCP 网络优化"
-        echo -e "  ${GREEN}9.${PLAIN} 安装伪装 (静态站 / OpenList)"
+        echo -e "  ${GREEN}9.${PLAIN} nftables 黑名单 (trick77/nftables-blacklist)"
         ui::divider
         echo -e "  ${GREEN}10.${PLAIN} 检查并更新管理脚本"
         echo -e "  ${GREEN}11.${PLAIN} 卸载脚本 (可选卸载所有组件)"
@@ -1736,7 +1393,7 @@ menu::main() {
             6)  menu::common_software ;;
             7)  menu::ufw ;;
             8)  tcp::run ;;
-            9)  menu::camouflage ;;
+            9)  menu::nftbl ;;
             10) self::check_update "$@" ;;
             11) self::uninstall ;;
             0)  exit 0 ;;

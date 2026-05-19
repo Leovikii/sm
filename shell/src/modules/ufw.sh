@@ -188,7 +188,9 @@ ufw::delete_rule_interactive() {
     log::info "已选择规则: $rule_info"
 
     local target_def port proto other
-    target_def=$(echo "$rule_info" | awk '{print $2}')
+    # 跳过 "[ N]" 头部再取下一个 token；awk '{print $2}' 在编号 1-9
+    # ("[ 1]" 内含空格) 时会把 "1]" 当成 $2，造成解析失败
+    target_def=$(echo "$rule_info" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]+([^[:space:]]+).*/\1/')
     port=$(echo "$target_def" | cut -d'/' -f1)
     proto=$(echo "$target_def" | cut -d'/' -f2)
     if [[ -z "$port" || -z "$proto" || "$port" == "$target_def" ]]; then

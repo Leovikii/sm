@@ -101,11 +101,11 @@ self::uninstall() {
         echo
     fi
 
-    if [[ -d "$CAMOUFLAGE_WEB_ROOT" || -f "$OPENLIST_DIR/docker-compose.yml" ]]; then
-        if ui::confirm "检测到 ${BLUE}伪装站点${PLAIN}，是否卸载?"; then
-            camouflage::uninstall
+    if nftbl::is_installed; then
+        if ui::confirm "检测到 ${BLUE}nftables 黑名单${PLAIN}，是否卸载?"; then
+            nftbl::uninstall
         else
-            log::info "已保留伪装站点"
+            log::info "已保留 nftables 黑名单"
         fi
         echo
     fi
