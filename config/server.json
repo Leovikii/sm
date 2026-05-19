@@ -17,7 +17,8 @@
                 "sniffer": [
                     "http",
                     "tls",
-                    "quic"
+                    "quic",
+                    "dns"
                 ]
             },
             {
