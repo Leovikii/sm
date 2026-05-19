@@ -2,7 +2,6 @@
 # net:: 网络下载（统一 UA / 超时 / 重试）
 # ==============================================================================
 
-# net::fetch URL  -> 输出到 stdout
 net::fetch() {
     local url="$1"
     if sys::has_cmd curl; then
@@ -12,7 +11,6 @@ net::fetch() {
     fi
 }
 
-# net::download URL DEST
 net::download() {
     local url="$1" dest="$2"
     if sys::has_cmd curl; then

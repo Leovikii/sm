@@ -10,7 +10,6 @@ svc::enable()    { systemctl enable "$1" >/dev/null 2>&1; }
 svc::disable()   { systemctl disable "$1" 2>/dev/null; }
 svc::logs()      { journalctl -u "$1" -f -o cat; }
 
-# svc::ensure_running NAME [OK_MSG] [FAIL_MSG]
 svc::ensure_running() {
     local name="$1"
     local ok_msg="${2:-$name 已启动}"

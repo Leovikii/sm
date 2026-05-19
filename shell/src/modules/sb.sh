@@ -40,19 +40,24 @@ sb::install() {
 }
 
 sb::uninstall() {
-    log::info "正在停止服务..."
+    log::warn "即将卸载 Sing-box 及其软件源、密钥"
+    ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
+
     svc::stop sing-box
     svc::disable sing-box
-
-    log::info "正在清理软件包..."
     pkg::purge sing-box
 
-    log::info "正在清理配置文件..."
-    rm -rf /etc/sing-box
     rm -f /etc/apt/sources.list.d/sagernet.list
     rm -f /etc/apt/keyrings/sagernet.asc
 
-    log::info "Sing-box 及其配置已彻底移除。"
+    # /etc/sing-box 内有用户拉下来或手写的 config.json 以及历史证书目录，
+    # 默认保留并询问是否清理
+    if [[ -d /etc/sing-box ]] && ui::confirm "是否同时删除配置目录 /etc/sing-box?"; then
+        rm -rf /etc/sing-box
+        log::info "/etc/sing-box 已删除"
+    fi
+
+    log::info "Sing-box 已卸载"
 }
 
 sb::apply_config() {

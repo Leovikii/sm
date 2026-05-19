@@ -3,26 +3,31 @@
 # ==============================================================================
 
 ui::clear()   { clear; }
-ui::divider() { echo -e "────────────────────────────────────────────────"; }
 
-# ui::header TITLE [SUBTITLE]
+# 缩进 1 空格让上下文呼吸，色调统一蓝色
+ui::divider() { echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"; }
+
+# 不画封闭 box —— 含 CJK 字符时 printf "%-Ns" 永远对不齐右侧 │，
+# 且 │ ─ 这些方框字在不同终端下宽度歧义（East Asian Ambiguous Width）
 ui::header() {
     local title="$1" subtitle="${2:-}"
     ui::clear
-    echo -e "┌──────────────────────────────────────────────┐"
-    printf "│              ${BLUE}%-32s${PLAIN}│\n" "$title"
-    [[ -n "$subtitle" ]] && printf "│                ${GREEN}%-30s${PLAIN}│\n" "$subtitle"
-    echo -e "└──────────────────────────────────────────────┘"
+    echo
+    echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
+    if [[ -n "$subtitle" ]]; then
+        echo -e "  ${BLUE}❯${PLAIN} ${BLUE}${title}${PLAIN}  ${GREEN}${subtitle}${PLAIN}"
+    else
+        echo -e "  ${BLUE}❯${PLAIN} ${BLUE}${title}${PLAIN}"
+    fi
+    echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
 }
 
-# ui::confirm PROMPT  -> 0 if yes, 1 otherwise
 ui::confirm() {
     local prompt="$1" ans
     read -r -p "$prompt (y/N): " ans || exit 130
     [[ "${ans,,}" == "y" ]]
 }
 
-# ui::prompt PROMPT VARNAME [-e]
 ui::prompt() {
     local prompt="$1" varname="$2" flag="${3:-}"
     if [[ "$flag" == "-e" ]]; then

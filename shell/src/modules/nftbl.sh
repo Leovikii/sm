@@ -190,17 +190,14 @@ nftbl::uninstall() {
     log::warn "即将卸载 nftables 黑名单 (仅清理本脚本自动生成的资源)"
     ui::confirm "确认卸载?" || { log::info "取消"; return; }
 
-    log::step "停用并删除 systemd timer/service..."
     systemctl disable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1 || true
     rm -f "$NFTBL_TIMER" "$NFTBL_SERVICE"
     systemctl daemon-reload
 
-    log::step "清理 nft inet blacklist 表..."
     if sys::has_cmd nft && nftbl::table_exists; then
         nft delete table inet blacklist 2>/dev/null && log::info "nft 表已删除"
     fi
 
-    log::step "删除 update-blacklist.sh..."
     rm -f "$NFTBL_SCRIPT_PATH"
 
     if [[ -d "$NFTBL_CONF_DIR" ]]; then

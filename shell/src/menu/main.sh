@@ -4,7 +4,6 @@
 
 menu::main() {
     while true; do
-        # 状态采集集中在循环顶部，避免 echo 行内多次嵌套子 shell
         local up sb_ver sb_st ufw_st
         up="$(sys::uptime)"
         sb_ver="$(sb::version)"
@@ -12,14 +11,14 @@ menu::main() {
         ufw_st="$(ufw::status_text)"
 
         ui::clear
-        echo -e "┌──────────────────────────────────────────────┐"
-        echo -e "│              ${BLUE}Sing-box 管理脚本${PLAIN}               │"
-        echo -e "│                ${GREEN}版本: v${SCRIPT_VERSION}${PLAIN}                 │"
-        echo -e "└──────────────────────────────────────────────┘"
-        echo -e " 系统运行时间: ${up}"
-        echo -e " Sing-box版本: ${BLUE}${sb_ver}${PLAIN}"
-        echo -e " 运行状态    : ${sb_st}"
-        echo -e " UFW 状态    : ${ufw_st}"
+        echo
+        echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
+        echo -e "  ${BLUE}❯${PLAIN} ${BLUE}Sing-box 管理脚本${PLAIN}  ${GREEN}v${SCRIPT_VERSION}${PLAIN}"
+        echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
+        echo -e "  ${BLUE}·${PLAIN} 系统运行时间  ${up}"
+        echo -e "  ${BLUE}·${PLAIN} Sing-box 版本 ${BLUE}${sb_ver}${PLAIN}"
+        echo -e "  ${BLUE}·${PLAIN} 运行状态      ${sb_st}"
+        echo -e "  ${BLUE}·${PLAIN} UFW 状态      ${ufw_st}"
         ui::divider
         echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
         echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"
@@ -34,9 +33,9 @@ menu::main() {
         ui::divider
         echo -e "  ${GREEN}10.${PLAIN} 检查并更新管理脚本"
         echo -e "  ${GREEN}11.${PLAIN} 卸载脚本 (可选卸载所有组件)"
-        echo -e "  ${GREEN}0.${PLAIN} 退出"
+        echo -e "  ${GREEN}0.${PLAIN}  退出"
         ui::divider
-        echo -e " 快捷指令: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
+        echo -e "  ${BLUE}快捷指令${PLAIN}: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
         echo
         local opt
         ui::prompt " 请输入选项 [0-11]: " opt

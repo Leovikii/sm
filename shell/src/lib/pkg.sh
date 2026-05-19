@@ -16,13 +16,11 @@ pkg::purge()         { DEBIAN_FRONTEND=noninteractive apt-get purge -y "$@"; }
 pkg::autoremove()    { DEBIAN_FRONTEND=noninteractive apt-get autoremove -y --purge "$@"; }
 pkg::clean()         { apt-get clean; }
 
-# pkg::full_upgrade [APT_OPTS...] - 内核及依赖全量升级
 pkg::full_upgrade() {
     DEBIAN_FRONTEND=noninteractive apt-get "$@" -y full-upgrade
 }
 
-# pkg::ensure_deps - 安装通用依赖（带缓存标记）
-# 失败时回退到 verbose 模式重试，让用户看到真实 apt 错误
+# 静默模式失败时回退到 verbose 模式重跑，让用户看到真实 apt 错误
 pkg::ensure_deps() {
     [[ $_DEPS_CHECKED -eq 1 ]] && return 0
     if [[ -f "$DEPS_FLAG" ]]; then _DEPS_CHECKED=1; return 0; fi
@@ -53,7 +51,6 @@ pkg::ensure_deps() {
     _DEPS_CHECKED=1
 }
 
-# pkg::add_gpg_key URL DEST [--dearmor]
 pkg::add_gpg_key() {
     local url="$1" dest="$2" mode="${3:-}"
     if [[ "$mode" == "--dearmor" ]]; then
@@ -65,7 +62,6 @@ pkg::add_gpg_key() {
     chmod a+r "$dest"
 }
 
-# pkg::write_repo CONTENT DEST_LIST
 pkg::write_repo() {
     local content="$1" dest="$2"
     echo "$content" > "$dest"

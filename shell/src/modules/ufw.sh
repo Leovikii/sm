@@ -4,8 +4,7 @@
 
 ufw::is_installed() { sys::has_cmd ufw; }
 
-# 加 timeout 防止 ufw status numbered 在某些 nf_tables 状态下卡死
-# 5 秒还没返回就放弃，避免脚本整个 hang 住
+# 加 timeout 防止某些 nf_tables 状态下 ufw status numbered 卡死
 ufw::_status_numbered() {
     timeout 5 ufw status numbered 2>/dev/null
 }
@@ -107,7 +106,6 @@ ufw::uninstall() {
     log::warn "即将卸载 UFW 及其所有配置"
     ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
 
-    log::step "正在卸载 UFW..."
     ufw disable >/dev/null 2>&1
     pkg::purge ufw >/dev/null 2>&1
     pkg::autoremove >/dev/null 2>&1
@@ -115,7 +113,6 @@ ufw::uninstall() {
     log::info "UFW 已完全卸载"
 }
 
-# ufw::allow PORT PROTO [COMMENT]
 ufw::allow() {
     local port="$1" proto="$2" comment="${3:-Port ${1}/${2}}"
     if ufw allow "${port}/${proto}" comment "$comment" >/dev/null 2>&1; then
@@ -131,7 +128,6 @@ ufw::list_numbered() {
     ufw::_status_numbered
 }
 
-# 交互式添加：解析输入 + 询问是否同时放行另一协议
 ufw::add_rule_interactive() {
     ufw::_require || return
     log::info "添加 UFW 规则 (示例: 2222/tcp 或 8080/udp)"
@@ -158,7 +154,6 @@ ufw::add_rule_interactive() {
     fi
 }
 
-# 交互式删除：按编号选择，自动匹配同端口的所有规则（v4+v6）
 ufw::delete_rule_interactive() {
     ufw::_require || return
     log::info "当前防火墙规则："
@@ -208,7 +203,6 @@ ufw::delete_rule_interactive() {
     fi
 
     local rules_to_delete=()
-    log::step "正在查找所有相关规则..."
     while IFS= read -r line; do
         if echo "$line" | grep -q -w "${port}/${proto}"; then
             local num
@@ -238,7 +232,6 @@ ufw::delete_rule_interactive() {
     log::warn "总共将删除 ${#rules_to_delete[@]} 条规则 (编号: ${rules_to_delete[*]})"
     ui::confirm "确认删除?" || { log::warn "取消删除"; return; }
 
-    log::step "正在删除规则..."
     local num
     for num in "${rules_to_delete[@]}"; do
         if echo "y" | ufw delete "$num" >/dev/null 2>&1; then

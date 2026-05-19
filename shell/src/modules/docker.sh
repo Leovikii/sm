@@ -50,7 +50,6 @@ docker::install() {
     fi
 }
 
-# /var/lib/docker 与 /var/lib/containerd 含镜像/卷/容器数据，单独二次确认
 docker::uninstall() {
     if ! docker::is_installed; then
         log::warn "Docker 未安装"
@@ -59,27 +58,27 @@ docker::uninstall() {
     log::warn "即将卸载 Docker CE / Compose / containerd 及其软件源、密钥"
     ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
 
-    log::step "正在停止服务..."
     svc::stop docker
     svc::stop containerd
     svc::disable docker
     svc::disable containerd
 
-    log::step "正在卸载软件包..."
     pkg::purge docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
 
-    log::step "正在清理软件源、密钥与配置..."
     rm -f /etc/apt/sources.list.d/docker.list
     rm -f /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.gpg
-    rm -rf /etc/docker
 
-    # 数据目录单独二次确认（默认保留）
-    local need_confirm=0
-    [[ -d /var/lib/docker || -d /var/lib/containerd ]] && need_confirm=1
-    if [[ $need_confirm -eq 1 ]]; then
+    # /etc/docker 含用户的 daemon.json，默认保留并询问
+    if [[ -d /etc/docker ]] && ui::confirm "是否同时删除配置目录 /etc/docker (含 daemon.json)?"; then
+        rm -rf /etc/docker
+        log::info "/etc/docker 已删除"
+    fi
+
+    # /var/lib/docker 与 /var/lib/containerd 含镜像/卷/容器数据，可能数十 GB，单独二次确认
+    if [[ -d /var/lib/docker || -d /var/lib/containerd ]]; then
         echo
-        log::warn "⚠️  /var/lib/docker 与 /var/lib/containerd 内含所有镜像、卷、容器数据"
-        log::warn "    这些数据通常占用数 GB 至数十 GB，删除后无法恢复"
+        log::warn "/var/lib/docker 与 /var/lib/containerd 内含所有镜像、卷、容器数据"
+        log::warn "这些数据通常占用数 GB 至数十 GB，删除后无法恢复"
         if ui::confirm "是否一并清空 Docker 数据目录? (默认 N，强烈建议先备份重要卷)"; then
             rm -rf /var/lib/docker /var/lib/containerd
             log::info "Docker 数据目录已清空"

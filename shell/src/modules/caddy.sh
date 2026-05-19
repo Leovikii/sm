@@ -50,14 +50,10 @@ caddy::uninstall() {
     log::warn "即将卸载 Caddy 及其软件源、密钥"
     ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
 
-    log::step "正在停止服务..."
     svc::stop caddy
     svc::disable caddy
-
-    log::step "正在卸载软件包..."
     pkg::purge caddy
 
-    log::step "正在清理软件源与密钥..."
     rm -f /etc/apt/sources.list.d/caddy-stable.list
     rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     rm -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg

@@ -51,26 +51,31 @@ log::step() { echo -e "${BLUE}[*]${PLAIN} $1"; }
 # ==============================================================================
 
 ui::clear()   { clear; }
-ui::divider() { echo -e "────────────────────────────────────────────────"; }
 
-# ui::header TITLE [SUBTITLE]
+# 缩进 1 空格让上下文呼吸，色调统一蓝色
+ui::divider() { echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"; }
+
+# 不画封闭 box —— 含 CJK 字符时 printf "%-Ns" 永远对不齐右侧 │，
+# 且 │ ─ 这些方框字在不同终端下宽度歧义（East Asian Ambiguous Width）
 ui::header() {
     local title="$1" subtitle="${2:-}"
     ui::clear
-    echo -e "┌──────────────────────────────────────────────┐"
-    printf "│              ${BLUE}%-32s${PLAIN}│\n" "$title"
-    [[ -n "$subtitle" ]] && printf "│                ${GREEN}%-30s${PLAIN}│\n" "$subtitle"
-    echo -e "└──────────────────────────────────────────────┘"
+    echo
+    echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
+    if [[ -n "$subtitle" ]]; then
+        echo -e "  ${BLUE}❯${PLAIN} ${BLUE}${title}${PLAIN}  ${GREEN}${subtitle}${PLAIN}"
+    else
+        echo -e "  ${BLUE}❯${PLAIN} ${BLUE}${title}${PLAIN}"
+    fi
+    echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
 }
 
-# ui::confirm PROMPT  -> 0 if yes, 1 otherwise
 ui::confirm() {
     local prompt="$1" ans
     read -r -p "$prompt (y/N): " ans || exit 130
     [[ "${ans,,}" == "y" ]]
 }
 
-# ui::prompt PROMPT VARNAME [-e]
 ui::prompt() {
     local prompt="$1" varname="$2" flag="${3:-}"
     if [[ "$flag" == "-e" ]]; then
@@ -135,7 +140,6 @@ sys::reboot_if_needed() {
 # net:: 网络下载（统一 UA / 超时 / 重试）
 # ==============================================================================
 
-# net::fetch URL  -> 输出到 stdout
 net::fetch() {
     local url="$1"
     if sys::has_cmd curl; then
@@ -145,7 +149,6 @@ net::fetch() {
     fi
 }
 
-# net::download URL DEST
 net::download() {
     local url="$1" dest="$2"
     if sys::has_cmd curl; then
@@ -174,13 +177,11 @@ pkg::purge()         { DEBIAN_FRONTEND=noninteractive apt-get purge -y "$@"; }
 pkg::autoremove()    { DEBIAN_FRONTEND=noninteractive apt-get autoremove -y --purge "$@"; }
 pkg::clean()         { apt-get clean; }
 
-# pkg::full_upgrade [APT_OPTS...] - 内核及依赖全量升级
 pkg::full_upgrade() {
     DEBIAN_FRONTEND=noninteractive apt-get "$@" -y full-upgrade
 }
 
-# pkg::ensure_deps - 安装通用依赖（带缓存标记）
-# 失败时回退到 verbose 模式重试，让用户看到真实 apt 错误
+# 静默模式失败时回退到 verbose 模式重跑，让用户看到真实 apt 错误
 pkg::ensure_deps() {
     [[ $_DEPS_CHECKED -eq 1 ]] && return 0
     if [[ -f "$DEPS_FLAG" ]]; then _DEPS_CHECKED=1; return 0; fi
@@ -211,7 +212,6 @@ pkg::ensure_deps() {
     _DEPS_CHECKED=1
 }
 
-# pkg::add_gpg_key URL DEST [--dearmor]
 pkg::add_gpg_key() {
     local url="$1" dest="$2" mode="${3:-}"
     if [[ "$mode" == "--dearmor" ]]; then
@@ -223,7 +223,6 @@ pkg::add_gpg_key() {
     chmod a+r "$dest"
 }
 
-# pkg::write_repo CONTENT DEST_LIST
 pkg::write_repo() {
     local content="$1" dest="$2"
     echo "$content" > "$dest"
@@ -242,7 +241,6 @@ svc::enable()    { systemctl enable "$1" >/dev/null 2>&1; }
 svc::disable()   { systemctl disable "$1" 2>/dev/null; }
 svc::logs()      { journalctl -u "$1" -f -o cat; }
 
-# svc::ensure_running NAME [OK_MSG] [FAIL_MSG]
 svc::ensure_running() {
     local name="$1"
     local ok_msg="${2:-$name 已启动}"
@@ -273,7 +271,6 @@ self::install_shortcut() {
     exec "$INSTALL_PATH" "$@"
 }
 
-# self::persist_var KEY VAL [PATH]
 self::persist_var() {
     local key="$1" val="$2" path="${3:-$INSTALL_PATH}"
     sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$path"
@@ -436,14 +433,10 @@ caddy::uninstall() {
     log::warn "即将卸载 Caddy 及其软件源、密钥"
     ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
 
-    log::step "正在停止服务..."
     svc::stop caddy
     svc::disable caddy
-
-    log::step "正在卸载软件包..."
     pkg::purge caddy
 
-    log::step "正在清理软件源与密钥..."
     rm -f /etc/apt/sources.list.d/caddy-stable.list
     rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     rm -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
@@ -510,7 +503,6 @@ docker::install() {
     fi
 }
 
-# /var/lib/docker 与 /var/lib/containerd 含镜像/卷/容器数据，单独二次确认
 docker::uninstall() {
     if ! docker::is_installed; then
         log::warn "Docker 未安装"
@@ -519,27 +511,27 @@ docker::uninstall() {
     log::warn "即将卸载 Docker CE / Compose / containerd 及其软件源、密钥"
     ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
 
-    log::step "正在停止服务..."
     svc::stop docker
     svc::stop containerd
     svc::disable docker
     svc::disable containerd
 
-    log::step "正在卸载软件包..."
     pkg::purge docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
 
-    log::step "正在清理软件源、密钥与配置..."
     rm -f /etc/apt/sources.list.d/docker.list
     rm -f /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.gpg
-    rm -rf /etc/docker
 
-    # 数据目录单独二次确认（默认保留）
-    local need_confirm=0
-    [[ -d /var/lib/docker || -d /var/lib/containerd ]] && need_confirm=1
-    if [[ $need_confirm -eq 1 ]]; then
+    # /etc/docker 含用户的 daemon.json，默认保留并询问
+    if [[ -d /etc/docker ]] && ui::confirm "是否同时删除配置目录 /etc/docker (含 daemon.json)?"; then
+        rm -rf /etc/docker
+        log::info "/etc/docker 已删除"
+    fi
+
+    # /var/lib/docker 与 /var/lib/containerd 含镜像/卷/容器数据，可能数十 GB，单独二次确认
+    if [[ -d /var/lib/docker || -d /var/lib/containerd ]]; then
         echo
-        log::warn "⚠️  /var/lib/docker 与 /var/lib/containerd 内含所有镜像、卷、容器数据"
-        log::warn "    这些数据通常占用数 GB 至数十 GB，删除后无法恢复"
+        log::warn "/var/lib/docker 与 /var/lib/containerd 内含所有镜像、卷、容器数据"
+        log::warn "这些数据通常占用数 GB 至数十 GB，删除后无法恢复"
         if ui::confirm "是否一并清空 Docker 数据目录? (默认 N，强烈建议先备份重要卷)"; then
             rm -rf /var/lib/docker /var/lib/containerd
             log::info "Docker 数据目录已清空"
@@ -745,17 +737,14 @@ nftbl::uninstall() {
     log::warn "即将卸载 nftables 黑名单 (仅清理本脚本自动生成的资源)"
     ui::confirm "确认卸载?" || { log::info "取消"; return; }
 
-    log::step "停用并删除 systemd timer/service..."
     systemctl disable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1 || true
     rm -f "$NFTBL_TIMER" "$NFTBL_SERVICE"
     systemctl daemon-reload
 
-    log::step "清理 nft inet blacklist 表..."
     if sys::has_cmd nft && nftbl::table_exists; then
         nft delete table inet blacklist 2>/dev/null && log::info "nft 表已删除"
     fi
 
-    log::step "删除 update-blacklist.sh..."
     rm -f "$NFTBL_SCRIPT_PATH"
 
     if [[ -d "$NFTBL_CONF_DIR" ]]; then
@@ -815,19 +804,24 @@ sb::install() {
 }
 
 sb::uninstall() {
-    log::info "正在停止服务..."
+    log::warn "即将卸载 Sing-box 及其软件源、密钥"
+    ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
+
     svc::stop sing-box
     svc::disable sing-box
-
-    log::info "正在清理软件包..."
     pkg::purge sing-box
 
-    log::info "正在清理配置文件..."
-    rm -rf /etc/sing-box
     rm -f /etc/apt/sources.list.d/sagernet.list
     rm -f /etc/apt/keyrings/sagernet.asc
 
-    log::info "Sing-box 及其配置已彻底移除。"
+    # /etc/sing-box 内有用户拉下来或手写的 config.json 以及历史证书目录，
+    # 默认保留并询问是否清理
+    if [[ -d /etc/sing-box ]] && ui::confirm "是否同时删除配置目录 /etc/sing-box?"; then
+        rm -rf /etc/sing-box
+        log::info "/etc/sing-box 已删除"
+    fi
+
+    log::info "Sing-box 已卸载"
 }
 
 sb::apply_config() {
@@ -917,8 +911,7 @@ tcp::run() {
 
 ufw::is_installed() { sys::has_cmd ufw; }
 
-# 加 timeout 防止 ufw status numbered 在某些 nf_tables 状态下卡死
-# 5 秒还没返回就放弃，避免脚本整个 hang 住
+# 加 timeout 防止某些 nf_tables 状态下 ufw status numbered 卡死
 ufw::_status_numbered() {
     timeout 5 ufw status numbered 2>/dev/null
 }
@@ -1020,7 +1013,6 @@ ufw::uninstall() {
     log::warn "即将卸载 UFW 及其所有配置"
     ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
 
-    log::step "正在卸载 UFW..."
     ufw disable >/dev/null 2>&1
     pkg::purge ufw >/dev/null 2>&1
     pkg::autoremove >/dev/null 2>&1
@@ -1028,7 +1020,6 @@ ufw::uninstall() {
     log::info "UFW 已完全卸载"
 }
 
-# ufw::allow PORT PROTO [COMMENT]
 ufw::allow() {
     local port="$1" proto="$2" comment="${3:-Port ${1}/${2}}"
     if ufw allow "${port}/${proto}" comment "$comment" >/dev/null 2>&1; then
@@ -1044,7 +1035,6 @@ ufw::list_numbered() {
     ufw::_status_numbered
 }
 
-# 交互式添加：解析输入 + 询问是否同时放行另一协议
 ufw::add_rule_interactive() {
     ufw::_require || return
     log::info "添加 UFW 规则 (示例: 2222/tcp 或 8080/udp)"
@@ -1071,7 +1061,6 @@ ufw::add_rule_interactive() {
     fi
 }
 
-# 交互式删除：按编号选择，自动匹配同端口的所有规则（v4+v6）
 ufw::delete_rule_interactive() {
     ufw::_require || return
     log::info "当前防火墙规则："
@@ -1121,7 +1110,6 @@ ufw::delete_rule_interactive() {
     fi
 
     local rules_to_delete=()
-    log::step "正在查找所有相关规则..."
     while IFS= read -r line; do
         if echo "$line" | grep -q -w "${port}/${proto}"; then
             local num
@@ -1151,7 +1139,6 @@ ufw::delete_rule_interactive() {
     log::warn "总共将删除 ${#rules_to_delete[@]} 条规则 (编号: ${rules_to_delete[*]})"
     ui::confirm "确认删除?" || { log::warn "取消删除"; return; }
 
-    log::step "正在删除规则..."
     local num
     for num in "${rules_to_delete[@]}"; do
         if echo "y" | ufw delete "$num" >/dev/null 2>&1; then
@@ -1348,7 +1335,6 @@ menu::ufw() {
 
 menu::main() {
     while true; do
-        # 状态采集集中在循环顶部，避免 echo 行内多次嵌套子 shell
         local up sb_ver sb_st ufw_st
         up="$(sys::uptime)"
         sb_ver="$(sb::version)"
@@ -1356,14 +1342,14 @@ menu::main() {
         ufw_st="$(ufw::status_text)"
 
         ui::clear
-        echo -e "┌──────────────────────────────────────────────┐"
-        echo -e "│              ${BLUE}Sing-box 管理脚本${PLAIN}               │"
-        echo -e "│                ${GREEN}版本: v${SCRIPT_VERSION}${PLAIN}                 │"
-        echo -e "└──────────────────────────────────────────────┘"
-        echo -e " 系统运行时间: ${up}"
-        echo -e " Sing-box版本: ${BLUE}${sb_ver}${PLAIN}"
-        echo -e " 运行状态    : ${sb_st}"
-        echo -e " UFW 状态    : ${ufw_st}"
+        echo
+        echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
+        echo -e "  ${BLUE}❯${PLAIN} ${BLUE}Sing-box 管理脚本${PLAIN}  ${GREEN}v${SCRIPT_VERSION}${PLAIN}"
+        echo -e "${BLUE} ──────────────────────────────────────────────${PLAIN}"
+        echo -e "  ${BLUE}·${PLAIN} 系统运行时间  ${up}"
+        echo -e "  ${BLUE}·${PLAIN} Sing-box 版本 ${BLUE}${sb_ver}${PLAIN}"
+        echo -e "  ${BLUE}·${PLAIN} 运行状态      ${sb_st}"
+        echo -e "  ${BLUE}·${PLAIN} UFW 状态      ${ufw_st}"
         ui::divider
         echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
         echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"
@@ -1378,9 +1364,9 @@ menu::main() {
         ui::divider
         echo -e "  ${GREEN}10.${PLAIN} 检查并更新管理脚本"
         echo -e "  ${GREEN}11.${PLAIN} 卸载脚本 (可选卸载所有组件)"
-        echo -e "  ${GREEN}0.${PLAIN} 退出"
+        echo -e "  ${GREEN}0.${PLAIN}  退出"
         ui::divider
-        echo -e " 快捷指令: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
+        echo -e "  ${BLUE}快捷指令${PLAIN}: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
         echo
         local opt
         ui::prompt " 请输入选项 [0-11]: " opt

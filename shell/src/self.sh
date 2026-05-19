@@ -12,7 +12,6 @@ self::install_shortcut() {
     exec "$INSTALL_PATH" "$@"
 }
 
-# self::persist_var KEY VAL [PATH]
 self::persist_var() {
     local key="$1" val="$2" path="${3:-$INSTALL_PATH}"
     sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$path"
