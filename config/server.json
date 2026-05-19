@@ -22,7 +22,8 @@
             },
             {
                 "ip_is_private": true,
-                "action": "reject"
+                "action": "reject",
+                "method": "drop"
             },
             {
                 "rule_set": [
@@ -36,11 +37,13 @@
                     "geosite-netease",
                     "geosite-bilibili"
                 ],
-                "action": "reject"
+                "action": "reject",
+                "method": "drop"
             },
             {
                 "rule_set": "geoip-cn",
-                "action": "reject"
+                "action": "reject",
+                "method": "drop"
             },
             {
                 "rule_set": [
@@ -50,7 +53,8 @@
                     "asn-aliyun",
                     "asn-huawei"
                 ],
-                "action": "reject"
+                "action": "reject",
+                "method": "drop"
             }
         ],
         "rule_set": [
@@ -145,7 +149,8 @@
                 "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS55990.srs"
             }
         ],
-        "final": "direct"
+        "final": "direct",
+        "auto_detect_interface": true
     },
     "experimental": {
         "cache_file": {
