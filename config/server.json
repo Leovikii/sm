@@ -149,8 +149,7 @@
                 "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS55990.srs"
             }
         ],
-        "final": "direct",
-        "auto_detect_interface": true
+        "final": "direct"
     },
     "experimental": {
         "cache_file": {
