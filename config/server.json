@@ -81,7 +81,7 @@
             },
             {
                 "type": "remote",
-                "tag": "geosite-cn",
+                "tag": "geosite-google",
                 "format": "binary",
                 "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/google.srs"
             },
