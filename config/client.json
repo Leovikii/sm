@@ -194,6 +194,12 @@
         "outbound": "DR"
       },
       {
+        "rule_set": [
+          "geosite-geolocation-!cn"
+        ],
+        "outbound": "MR"
+      },
+      {
         "action": "resolve"
       },
       {
@@ -204,20 +210,6 @@
       }
     ],
     "rule_set": [
-      {
-        "type": "remote",
-        "tag": "my-direct",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/dr.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "my-proxy",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/py.srs",
-        "download_detour": "DR"
-      },
       {
         "type": "remote",
         "tag": "geosite-dlsite",
@@ -234,9 +226,9 @@
       },
       {
         "type": "remote",
-        "tag": "geosite-samsung",
+        "tag": "my-proxy",
         "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/samsung.srs",
+        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/py.srs",
         "download_detour": "DR"
       },
       {
@@ -255,9 +247,30 @@
       },
       {
         "type": "remote",
+        "tag": "my-direct",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/dr.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
         "tag": "geosite-cn",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-samsung",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/samsung.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-geolocation-!cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs",
         "download_detour": "DR"
       },
       {
