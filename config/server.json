@@ -28,7 +28,7 @@
             },
             {
                 "rule_set": [
-                    "custom-proxy",
+                    "my-proxy",
                     "geosite-amd",
                     "geosite-google"
                 ],
@@ -50,6 +50,9 @@
                 "method": "drop"
             },
             {
+                "action": "resolve"
+            },
+            {
                 "rule_set": "geoip-cn",
                 "action": "reject",
                 "method": "drop"
@@ -69,7 +72,7 @@
         "rule_set": [
             {
                 "type": "remote",
-                "tag": "custom-proxy",
+                "tag": "my-proxy",
                 "format": "binary",
                 "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/py.srs"
             },
