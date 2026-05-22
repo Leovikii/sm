@@ -6,18 +6,18 @@
   "dns": {
     "servers": [
       {
-        "tag": "dns_direct",
+        "tag": "dns-direct",
         "type": "https",
         "server": "223.5.5.5"
       },
       {
-        "tag": "dns_proxy",
+        "tag": "dns-proxy",
         "type": "https",
         "server": "1.1.1.1",
         "detour": "MR"
       },
       {
-        "tag": "dns_jp",
+        "tag": "dns-jp",
         "type": "https",
         "server": "1.1.1.1",
         "detour": "JP"
@@ -26,11 +26,11 @@
     "rules": [
       {
         "clash_mode": "direct",
-        "server": "dns_direct"
+        "server": "dns-direct"
       },
       {
         "clash_mode": "global",
-        "server": "dns_proxy"
+        "server": "dns-proxy"
       },
       {
         "query_type": "HTTPS",
@@ -38,29 +38,29 @@
       },
       {
         "rule_set": [
-          "rule_dlsite",
-          "rule_dmm"
+          "geosite-dlsite",
+          "geosite-dmm"
         ],
-        "server": "dns_jp"
+        "server": "dns-jp"
       },
       {
         "rule_set": [
-          "rule_proxy",
-          "rule_amd",
-          "rule_google"
+          "my-proxy",
+          "geosite-amd",
+          "geosite-google"
         ],
-        "server": "dns_proxy"
+        "server": "dns-proxy"
       },
       {
         "rule_set": [
-          "rule_direct",
-          "rule_cnsite",
-          "rule_samsung"
+          "my-direct",
+          "geosite-cn",
+          "geosite-samsung"
         ],
-        "server": "dns_direct"
+        "server": "dns-direct"
       }
     ],
-    "final": "dns_proxy",
+    "final": "dns-proxy",
     "independent_cache": true,
     "reverse_mapping": true
   },
@@ -172,25 +172,39 @@
       },
       {
         "rule_set": [
-          "rule_dlsite",
-          "rule_dmm"
+          "geosite-dlsite",
+          "geosite-dmm"
         ],
         "outbound": "JP"
       },
       {
         "rule_set": [
-          "rule_proxy",
-          "rule_amd",
-          "rule_google"
+          "my-proxy",
+          "geosite-amd",
+          "geosite-google"
         ],
         "outbound": "MR"
       },
       {
         "rule_set": [
-          "rule_direct",
-          "rule_cnip",
-          "rule_cnsite",
-          "rule_samsung"
+          "my-direct",
+          "geosite-cn",
+          "geosite-samsung"
+        ],
+        "outbound": "DR"
+      },
+      {
+        "rule_set": [
+          "geosite-geolocation-!cn"
+        ],
+        "outbound": "MR"
+      },
+      {
+        "action": "resolve"
+      },
+      {
+        "rule_set": [
+          "geoip-cn"
         ],
         "outbound": "DR"
       }
@@ -198,72 +212,76 @@
     "rule_set": [
       {
         "type": "remote",
-        "tag": "rule_direct",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/dr.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "rule_proxy",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/py.srs",
-        "download_detour": "DR"
-      },
-      {
-        "type": "remote",
-        "tag": "rule_dlsite",
+        "tag": "geosite-dlsite",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/dlsite.srs",
         "download_detour": "DR"
       },
       {
         "type": "remote",
-        "tag": "rule_dmm",
+        "tag": "geosite-dmm",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/dmm.srs",
         "download_detour": "DR"
       },
       {
         "type": "remote",
-        "tag": "rule_samsung",
+        "tag": "my-proxy",
         "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/samsung.srs",
+        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/py.srs",
         "download_detour": "DR"
       },
       {
         "type": "remote",
-        "tag": "rule_amd",
+        "tag": "geosite-amd",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/amd.srs",
         "download_detour": "DR"
       },
       {
         "type": "remote",
-        "tag": "rule_google",
+        "tag": "geosite-google",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/google.srs",
         "download_detour": "DR"
       },
       {
         "type": "remote",
-        "tag": "rule_cnsite",
+        "tag": "my-direct",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/dr.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
         "download_detour": "DR"
       },
       {
         "type": "remote",
-        "tag": "rule_cnip",
+        "tag": "geosite-samsung",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/samsung.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-geolocation-!cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/geolocation-!cn.srs",
+        "download_detour": "DR"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
         "download_detour": "DR"
       }
     ],
     "final": "MR",
-    "default_domain_resolver": {
-      "server": "dns_direct"
-    },
     "auto_detect_interface": true
   },
   "experimental": {

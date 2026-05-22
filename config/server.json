@@ -28,7 +28,7 @@
             },
             {
                 "rule_set": [
-                    "custom-proxy",
+                    "my-proxy",
                     "geosite-amd",
                     "geosite-google"
                 ],
@@ -36,18 +36,13 @@
             },
             {
                 "rule_set": [
-                    "geosite-cn",
-                    "geosite-tencent",
-                    "geosite-alibaba",
-                    "geosite-bytedance",
-                    "geosite-mihoyo",
-                    "geosite-xiaomi",
-                    "geosite-huawei",
-                    "geosite-netease",
-                    "geosite-bilibili"
+                    "geosite-cn"
                 ],
                 "action": "reject",
                 "method": "drop"
+            },
+            {
+                "action": "resolve"
             },
             {
                 "rule_set": "geoip-cn",
@@ -59,8 +54,11 @@
                     "asn-tencent-sg",
                     "asn-tencent-edgeone",
                     "asn-alibaba-us",
+                    "asn-alibaba-sg",
                     "asn-aliyun",
-                    "asn-huawei"
+                    "asn-huawei",
+                    "asn-bytedance-us",
+                    "asn-bytedance-sg"
                 ],
                 "action": "reject",
                 "method": "drop"
@@ -69,7 +67,7 @@
         "rule_set": [
             {
                 "type": "remote",
-                "tag": "custom-proxy",
+                "tag": "my-proxy",
                 "format": "binary",
                 "url": "https://testingcf.jsdelivr.net/gh/Leovikii/sm@main/rule-set/py.srs"
             },
@@ -90,54 +88,6 @@
                 "tag": "geosite-cn",
                 "format": "binary",
                 "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-tencent",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/tencent.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-alibaba",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/alibaba.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-bytedance",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bytedance.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-mihoyo",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/mihoyo.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-xiaomi",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/xiaomi.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-huawei",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/huawei.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-netease",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netease.srs"
-            },
-            {
-                "type": "remote",
-                "tag": "geosite-bilibili",
-                "format": "binary",
-                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bilibili.srs"
             },
             {
                 "type": "remote",
@@ -165,6 +115,12 @@
             },
             {
                 "type": "remote",
+                "tag": "asn-alibaba-sg",
+                "format": "binary",
+                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS133775.srs"
+            },
+            {
+                "type": "remote",
                 "tag": "asn-aliyun",
                 "format": "binary",
                 "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS37963.srs"
@@ -174,6 +130,18 @@
                 "tag": "asn-huawei",
                 "format": "binary",
                 "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS55990.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "asn-bytedance-us",
+                "format": "binary",
+                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS396986.srs"
+            },
+            {
+                "type": "remote",
+                "tag": "asn-bytedance-sg",
+                "format": "binary",
+                "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/asn/AS138699.srs"
             }
         ],
         "final": "DR"
