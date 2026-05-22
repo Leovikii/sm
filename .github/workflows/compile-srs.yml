@@ -1,6 +1,5 @@
 name: Compile Sing-Box Rules
 
-# 允许 workflow 使用 GITHUB_TOKEN 推送编译结果
 permissions:
   contents: write
 
@@ -23,10 +22,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # 使用 GitHub 官方 CLI 工具稳定下载，避免 curl API 导致 IP 限流
           gh release download -R SagerNet/sing-box --pattern "*linux-amd64.tar.gz" --clobber
           
-          # 解压并重命名
           tar -zxvf sing-box-*-linux-amd64.tar.gz
           extracted_dir=$(ls -d sing-box-*-linux-amd64 | head -n1)
           mv "$extracted_dir" sing-box
@@ -39,7 +36,6 @@ jobs:
           set -euo pipefail
           cd sing-box
           
-          # 清理旧的 srs 文件，防止 json 被删除后 srs 变成无法清理的“幽灵文件”
           rm -f "$GITHUB_WORKSPACE"/rule-set/*.srs
           
           compiled=0
@@ -64,7 +60,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           cd "$GITHUB_WORKSPACE"
-          # -A 会将删除操作也加入暂存区，完美同步 json 的增删改
           git add -A rule-set/*.srs
 
           if git diff --staged --quiet; then
