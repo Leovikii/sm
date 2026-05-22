@@ -282,7 +282,10 @@
       }
     ],
     "final": "MR",
-    "auto_detect_interface": true
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "dns-direct"
+    }
   },
   "experimental": {
     "cache_file": {
