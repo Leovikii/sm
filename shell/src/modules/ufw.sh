@@ -108,7 +108,6 @@ ufw::uninstall() {
 
     ufw disable >/dev/null 2>&1
     pkg::purge ufw >/dev/null 2>&1
-    pkg::autoremove >/dev/null 2>&1
     rm -rf /etc/ufw /lib/ufw /var/lib/ufw
     log::info "UFW 已完全卸载"
 }

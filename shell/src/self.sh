@@ -73,24 +73,6 @@ self::uninstall() {
         echo
     fi
 
-    if caddy::is_installed; then
-        if ui::confirm "检测到 ${BLUE}Caddy${PLAIN}，是否卸载?"; then
-            caddy::uninstall
-        else
-            log::info "已保留 Caddy"
-        fi
-        echo
-    fi
-
-    if docker::is_installed; then
-        if ui::confirm "检测到 ${BLUE}Docker${PLAIN}，是否卸载?"; then
-            docker::uninstall
-        else
-            log::info "已保留 Docker"
-        fi
-        echo
-    fi
-
     if ufw::is_installed; then
         if ui::confirm "检测到 ${BLUE}UFW${PLAIN}，是否卸载? (将丢失所有防火墙规则)"; then
             ufw::uninstall

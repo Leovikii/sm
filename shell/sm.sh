@@ -12,7 +12,7 @@ set -uo pipefail
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.2.0"
+SCRIPT_VERSION="3.2.1"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -239,7 +239,11 @@ svc::stop()      { systemctl stop "$1" 2>/dev/null; }
 svc::restart()   { systemctl restart "$1"; }
 svc::enable()    { systemctl enable "$1" >/dev/null 2>&1; }
 svc::disable()   { systemctl disable "$1" 2>/dev/null; }
-svc::logs()      { journalctl -u "$1" -f -o cat; }
+svc::logs()      {
+    trap '' INT
+    journalctl -u "$1" -f -o cat
+    trap 'echo -e "\n${YELLOW}[WARN]${PLAIN} 接收到退出指令，脚本终止。"; exit 130' INT TERM HUP
+}
 
 svc::ensure_running() {
     local name="$1"
@@ -328,24 +332,6 @@ self::uninstall() {
             sb::uninstall
         else
             log::info "已保留 Sing-box"
-        fi
-        echo
-    fi
-
-    if caddy::is_installed; then
-        if ui::confirm "检测到 ${BLUE}Caddy${PLAIN}，是否卸载?"; then
-            caddy::uninstall
-        else
-            log::info "已保留 Caddy"
-        fi
-        echo
-    fi
-
-    if docker::is_installed; then
-        if ui::confirm "检测到 ${BLUE}Docker${PLAIN}，是否卸载?"; then
-            docker::uninstall
-        else
-            log::info "已保留 Docker"
         fi
         echo
     fi
@@ -882,7 +868,6 @@ ufw::uninstall() {
 
     ufw disable >/dev/null 2>&1
     pkg::purge ufw >/dev/null 2>&1
-    pkg::autoremove >/dev/null 2>&1
     rm -rf /etc/ufw /lib/ufw /var/lib/ufw
     log::info "UFW 已完全卸载"
 }
@@ -1207,19 +1192,18 @@ menu::main() {
         local opt
         ui::prompt " 请输入选项 [0-9]: " opt
         case "$opt" in
-            1)  sb::install ;;
-            2)  sb::require_installed && menu::sb_service ;;
-            3)  sb::require_installed && sb::update_config_interactive ;;
-            4)  system::full_upgrade ;;
+            1)  sb::install; ui::pause ;;
+            2)  if sb::require_installed; then menu::sb_service; else ui::pause; fi ;;
+            3)  sb::require_installed && sb::update_config_interactive; ui::pause ;;
+            4)  system::full_upgrade; ui::pause ;;
             5)  menu::ufw ;;
-            6)  tcp::run ;;
+            6)  tcp::run; ui::pause ;;
             7)  menu::nftbl ;;
             8)  self::check_update "$@" ;;
-            9)  self::uninstall ;;
+            9)  self::uninstall; ui::pause ;;
             0)  exit 0 ;;
-            *)  log::err "无效选项，请重新输入" ;;
+            *)  log::err "无效选项，请重新输入"; ui::pause ;;
         esac
-        [[ "$opt" != "8" ]] && ui::pause
     done
 }
 

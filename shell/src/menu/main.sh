@@ -38,18 +38,17 @@ menu::main() {
         local opt
         ui::prompt " 请输入选项 [0-9]: " opt
         case "$opt" in
-            1)  sb::install ;;
-            2)  sb::require_installed && menu::sb_service ;;
-            3)  sb::require_installed && sb::update_config_interactive ;;
-            4)  system::full_upgrade ;;
+            1)  sb::install; ui::pause ;;
+            2)  if sb::require_installed; then menu::sb_service; else ui::pause; fi ;;
+            3)  sb::require_installed && sb::update_config_interactive; ui::pause ;;
+            4)  system::full_upgrade; ui::pause ;;
             5)  menu::ufw ;;
-            6)  tcp::run ;;
+            6)  tcp::run; ui::pause ;;
             7)  menu::nftbl ;;
             8)  self::check_update "$@" ;;
-            9)  self::uninstall ;;
+            9)  self::uninstall; ui::pause ;;
             0)  exit 0 ;;
-            *)  log::err "无效选项，请重新输入" ;;
+            *)  log::err "无效选项，请重新输入"; ui::pause ;;
         esac
-        [[ "$opt" != "8" ]] && ui::pause
     done
 }

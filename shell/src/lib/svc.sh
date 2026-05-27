@@ -8,7 +8,11 @@ svc::stop()      { systemctl stop "$1" 2>/dev/null; }
 svc::restart()   { systemctl restart "$1"; }
 svc::enable()    { systemctl enable "$1" >/dev/null 2>&1; }
 svc::disable()   { systemctl disable "$1" 2>/dev/null; }
-svc::logs()      { journalctl -u "$1" -f -o cat; }
+svc::logs()      {
+    trap '' INT
+    journalctl -u "$1" -f -o cat
+    trap 'echo -e "\n${YELLOW}[WARN]${PLAIN} 接收到退出指令，脚本终止。"; exit 130' INT TERM HUP
+}
 
 svc::ensure_running() {
     local name="$1"
