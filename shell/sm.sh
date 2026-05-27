@@ -12,7 +12,7 @@ set -uo pipefail
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.2.1"
+SCRIPT_VERSION="3.2.2"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -240,7 +240,7 @@ svc::restart()   { systemctl restart "$1"; }
 svc::enable()    { systemctl enable "$1" >/dev/null 2>&1; }
 svc::disable()   { systemctl disable "$1" 2>/dev/null; }
 svc::logs()      {
-    trap '' INT
+    trap - INT
     journalctl -u "$1" -f -o cat
     trap 'echo -e "\n${YELLOW}[WARN]${PLAIN} 接收到退出指令，脚本终止。"; exit 130' INT TERM HUP
 }
