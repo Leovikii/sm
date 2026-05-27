@@ -60,8 +60,30 @@ sb::uninstall() {
     log::info "Sing-box 已卸载"
 }
 
-sb::apply_config() {
-    local url="${1:-$DEFAULT_CONFIG_URL}"
+sb::require_installed() {
+    if ! sys::has_cmd sing-box; then
+        log::warn "未检测到 Sing-box 内核，配置与服务管理需要依赖它。"
+        if ui::confirm "是否立即安装 Sing-box?"; then
+            sb::install || return 1
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+sb::update_config_interactive() {
+    local new_url
+    ui::prompt "请输入配置下载链接 (直接回车保持默认): " new_url -e
+    if [[ -n "$new_url" ]]; then
+        self::persist_var "DEFAULT_CONFIG_URL" "$new_url"
+        DEFAULT_CONFIG_URL="$new_url"
+    elif [[ -z "$DEFAULT_CONFIG_URL" || "$DEFAULT_CONFIG_URL" == "https://example.com/config.json" ]]; then
+        log::err "未设置有效的默认下载链接，请重新输入 URL。"
+        return 1
+    fi
+
+    local url="$DEFAULT_CONFIG_URL"
     mkdir -p "$TMP_DIR"
     local tmp_conf="$TMP_DIR/config.json"
 
@@ -70,26 +92,17 @@ sb::apply_config() {
         log::err "下载失败，请检查 URL 是否正确或网络是否畅通。"
         return 1
     fi
-    if [[ ! -s "$tmp_conf" ]] || ! jq -e . "$tmp_conf" >/dev/null 2>&1; then
-        log::err "下载的文件不是有效的 JSON 格式或内容为空，操作已取消。"
+    
+    log::step "使用 Sing-box 内核进行配置语法语义校验..."
+    if ! sing-box check -c "$tmp_conf"; then
+        log::err "Sing-box 配置校验失败！请检查 JSON 内容是否合法。操作已取消。"
         return 1
     fi
+    
     mkdir -p /etc/sing-box
     mv "$tmp_conf" /etc/sing-box/config.json
-    log::info "配置文件验证通过并已应用。"
+    log::info "配置文件校验通过并已应用！"
     if ui::confirm "是否重启 Sing-box 服务?"; then
         svc::restart sing-box && log::info "服务已重启。"
     fi
-}
-
-sb::set_default_url() {
-    local new_url
-    ui::prompt "请输入新的默认配置下载链接: " new_url -e
-    if [[ -z "$new_url" ]]; then
-        log::warn "链接为空，未修改。"
-        return
-    fi
-    self::persist_var "DEFAULT_CONFIG_URL" "$new_url"
-    DEFAULT_CONFIG_URL="$new_url"
-    log::info "默认链接已更新。"
 }

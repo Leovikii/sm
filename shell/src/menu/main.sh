@@ -22,38 +22,34 @@ menu::main() {
         ui::divider
         echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
         echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"
-        echo -e "  ${GREEN}3.${PLAIN} 更新配置文件"
-        echo -e "  ${GREEN}4.${PLAIN} 修改默认配置下载链接"
+        echo -e "  ${GREEN}3.${PLAIN} 更新 Sing-box 配置文件"
         ui::divider
-        echo -e "  ${GREEN}5.${PLAIN} 系统更新 (full-upgrade 修复内核漏洞)"
-        echo -e "  ${GREEN}6.${PLAIN} 安装常用软件 (Caddy / Docker)"
-        echo -e "  ${GREEN}7.${PLAIN} UFW 防火墙管理"
-        echo -e "  ${GREEN}8.${PLAIN} 系统 TCP 网络优化"
-        echo -e "  ${GREEN}9.${PLAIN} nftables 黑名单 (trick77/nftables-blacklist)"
+        echo -e "  ${GREEN}4.${PLAIN} 系统更新 (full-upgrade 修复内核漏洞)"
+        echo -e "  ${GREEN}5.${PLAIN} UFW 防火墙管理"
+        echo -e "  ${GREEN}6.${PLAIN} 系统 TCP 网络优化"
+        echo -e "  ${GREEN}7.${PLAIN} nftables 黑名单 (trick77/nftables-blacklist)"
         ui::divider
-        echo -e "  ${GREEN}10.${PLAIN} 检查并更新管理脚本"
-        echo -e "  ${GREEN}11.${PLAIN} 卸载脚本 (可选卸载所有组件)"
+        echo -e "  ${GREEN}8.${PLAIN} 检查并更新管理脚本"
+        echo -e "  ${GREEN}9.${PLAIN} 卸载脚本 (可选卸载所有组件)"
         echo -e "  ${GREEN}0.${PLAIN}  退出"
         ui::divider
         echo -e "  ${BLUE}快捷指令${PLAIN}: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
         echo
         local opt
-        ui::prompt " 请输入选项 [0-11]: " opt
+        ui::prompt " 请输入选项 [0-9]: " opt
         case "$opt" in
             1)  sb::install ;;
-            2)  menu::sb_service ;;
-            3)  sb::apply_config "$DEFAULT_CONFIG_URL" ;;
-            4)  sb::set_default_url ;;
-            5)  system::full_upgrade ;;
-            6)  menu::common_software ;;
-            7)  menu::ufw ;;
-            8)  tcp::run ;;
-            9)  menu::nftbl ;;
-            10) self::check_update "$@" ;;
-            11) self::uninstall ;;
+            2)  sb::require_installed && menu::sb_service ;;
+            3)  sb::require_installed && sb::update_config_interactive ;;
+            4)  system::full_upgrade ;;
+            5)  menu::ufw ;;
+            6)  tcp::run ;;
+            7)  menu::nftbl ;;
+            8)  self::check_update "$@" ;;
+            9)  self::uninstall ;;
             0)  exit 0 ;;
             *)  log::err "无效选项，请重新输入" ;;
         esac
-        [[ "$opt" != "10" ]] && ui::pause
+        [[ "$opt" != "8" ]] && ui::pause
     done
 }
