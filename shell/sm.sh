@@ -12,7 +12,7 @@ set -uo pipefail
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.1.0"
+SCRIPT_VERSION="3.2.0"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -380,170 +380,6 @@ self::uninstall() {
     fi
 }
 
-# >>> src/modules/caddy.sh
-# ==============================================================================
-# caddy:: Caddy Web 服务器
-# ==============================================================================
-
-caddy::is_installed() { sys::has_cmd caddy; }
-
-caddy::install() {
-    log::info "准备安装 Caddy..."
-
-    rm -f /etc/apt/sources.list.d/caddy-stable.list
-    rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    rm -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
-
-    pkg::install_quiet debian-keyring debian-archive-keyring apt-transport-https
-
-    mkdir -p /usr/share/keyrings
-    if ! pkg::add_gpg_key \
-            "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" \
-            "/usr/share/keyrings/caddy-stable-archive-keyring.gpg" \
-            --dearmor; then
-        log::err "Caddy GPG 密钥下载/导入失败。"
-        return
-    fi
-
-    if ! net::fetch "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" \
-            > /etc/apt/sources.list.d/caddy-stable.list; then
-        log::err "Caddy 软件源列表下载失败。"
-        rm -f /etc/apt/sources.list.d/caddy-stable.list
-        return
-    fi
-    if [[ ! -s /etc/apt/sources.list.d/caddy-stable.list ]]; then
-        log::err "Caddy 软件源列表为空，已中止。"
-        rm -f /etc/apt/sources.list.d/caddy-stable.list
-        return
-    fi
-
-    pkg::update || { log::err "apt-get update 失败。"; return; }
-    if pkg::install caddy; then
-        svc::ensure_running caddy "Caddy 安装成功并已启动 (配置: /etc/caddy/Caddyfile)"
-    else
-        log::err "Caddy 安装失败，请检查网络或源是否可用。"
-    fi
-}
-
-caddy::uninstall() {
-    if ! caddy::is_installed; then
-        log::warn "Caddy 未安装"
-        return
-    fi
-    log::warn "即将卸载 Caddy 及其软件源、密钥"
-    ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
-
-    svc::stop caddy
-    svc::disable caddy
-    pkg::purge caddy
-
-    rm -f /etc/apt/sources.list.d/caddy-stable.list
-    rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    rm -f /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
-
-    if [[ -d /etc/caddy ]] && ui::confirm "是否同时删除配置目录 /etc/caddy?"; then
-        rm -rf /etc/caddy
-        log::info "/etc/caddy 已删除"
-    fi
-
-    pkg::autoremove >/dev/null 2>&1
-    log::info "Caddy 已卸载"
-}
-
-# >>> src/modules/docker.sh
-# ==============================================================================
-# docker:: Docker CE + Compose
-# ==============================================================================
-
-docker::is_installed() { sys::has_cmd docker; }
-
-docker::install() {
-    log::info "准备安装 Docker CE + Compose 插件..."
-
-    if sys::has_cmd docker; then
-        log::warn "检测到已安装: $(docker --version 2>/dev/null)"
-        ui::confirm "是否继续 (将走 apt 升级流程)?" || { log::info "已取消。"; return; }
-    fi
-
-    local distro_id distro_codename
-    distro_id="$(sys::distro_id)"
-    distro_codename="$(sys::distro_codename)"
-    case "$distro_id" in
-        ubuntu|debian) ;;
-        *) distro_id="debian" ;;
-    esac
-    if [[ -z "$distro_codename" ]]; then
-        log::err "无法读取系统代号 (VERSION_CODENAME)，安装中止。"
-        return
-    fi
-
-    rm -f /etc/apt/sources.list.d/docker.list
-    rm -f /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.gpg
-
-    install -m 0755 -d /etc/apt/keyrings
-    if ! pkg::add_gpg_key \
-            "https://download.docker.com/linux/${distro_id}/gpg" \
-            "/etc/apt/keyrings/docker.asc"; then
-        log::err "Docker GPG 密钥下载失败。"
-        return
-    fi
-
-    pkg::write_repo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${distro_id} ${distro_codename} stable" \
-        /etc/apt/sources.list.d/docker.list
-
-    pkg::update || { log::err "apt-get update 失败。"; return; }
-    if pkg::install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-        if svc::ensure_running docker "Docker 安装成功: $(docker --version 2>/dev/null)"; then
-            log::info "Compose: $(docker compose version 2>/dev/null | head -n1)"
-            log::info "如需非 root 用户使用 docker，请执行: usermod -aG docker <user> 后重新登录。"
-        fi
-    else
-        log::err "Docker 安装失败，请检查网络或源是否可用。"
-    fi
-}
-
-docker::uninstall() {
-    if ! docker::is_installed; then
-        log::warn "Docker 未安装"
-        return
-    fi
-    log::warn "即将卸载 Docker CE / Compose / containerd 及其软件源、密钥"
-    ui::confirm "确认卸载?" || { log::info "取消卸载"; return; }
-
-    svc::stop docker
-    svc::stop containerd
-    svc::disable docker
-    svc::disable containerd
-
-    pkg::purge docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
-
-    rm -f /etc/apt/sources.list.d/docker.list
-    rm -f /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.gpg
-
-    # /etc/docker 含用户的 daemon.json，默认保留并询问
-    if [[ -d /etc/docker ]] && ui::confirm "是否同时删除配置目录 /etc/docker (含 daemon.json)?"; then
-        rm -rf /etc/docker
-        log::info "/etc/docker 已删除"
-    fi
-
-    # /var/lib/docker 与 /var/lib/containerd 含镜像/卷/容器数据，可能数十 GB，单独二次确认
-    if [[ -d /var/lib/docker || -d /var/lib/containerd ]]; then
-        echo
-        log::warn "/var/lib/docker 与 /var/lib/containerd 内含所有镜像、卷、容器数据"
-        log::warn "这些数据通常占用数 GB 至数十 GB，删除后无法恢复"
-        if ui::confirm "是否一并清空 Docker 数据目录? (默认 N，强烈建议先备份重要卷)"; then
-            rm -rf /var/lib/docker /var/lib/containerd
-            log::info "Docker 数据目录已清空"
-        else
-            log::info "已保留 /var/lib/docker 与 /var/lib/containerd"
-        fi
-    fi
-
-    pkg::autoremove >/dev/null 2>&1
-    log::info "Docker 已卸载"
-}
-
 # >>> src/modules/nftbl.sh
 # ==============================================================================
 # nftbl:: nftables 黑名单 (trick77/nftables-blacklist)
@@ -824,8 +660,30 @@ sb::uninstall() {
     log::info "Sing-box 已卸载"
 }
 
-sb::apply_config() {
-    local url="${1:-$DEFAULT_CONFIG_URL}"
+sb::require_installed() {
+    if ! sys::has_cmd sing-box; then
+        log::warn "未检测到 Sing-box 内核，配置与服务管理需要依赖它。"
+        if ui::confirm "是否立即安装 Sing-box?"; then
+            sb::install || return 1
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+sb::update_config_interactive() {
+    local new_url
+    ui::prompt "请输入配置下载链接 (直接回车保持默认): " new_url -e
+    if [[ -n "$new_url" ]]; then
+        self::persist_var "DEFAULT_CONFIG_URL" "$new_url"
+        DEFAULT_CONFIG_URL="$new_url"
+    elif [[ -z "$DEFAULT_CONFIG_URL" || "$DEFAULT_CONFIG_URL" == "https://example.com/config.json" ]]; then
+        log::err "未设置有效的默认下载链接，请重新输入 URL。"
+        return 1
+    fi
+
+    local url="$DEFAULT_CONFIG_URL"
     mkdir -p "$TMP_DIR"
     local tmp_conf="$TMP_DIR/config.json"
 
@@ -834,28 +692,19 @@ sb::apply_config() {
         log::err "下载失败，请检查 URL 是否正确或网络是否畅通。"
         return 1
     fi
-    if [[ ! -s "$tmp_conf" ]] || ! jq -e . "$tmp_conf" >/dev/null 2>&1; then
-        log::err "下载的文件不是有效的 JSON 格式或内容为空，操作已取消。"
+    
+    log::step "使用 Sing-box 内核进行配置语法语义校验..."
+    if ! sing-box check -c "$tmp_conf"; then
+        log::err "Sing-box 配置校验失败！请检查 JSON 内容是否合法。操作已取消。"
         return 1
     fi
+    
     mkdir -p /etc/sing-box
     mv "$tmp_conf" /etc/sing-box/config.json
-    log::info "配置文件验证通过并已应用。"
+    log::info "配置文件校验通过并已应用！"
     if ui::confirm "是否重启 Sing-box 服务?"; then
         svc::restart sing-box && log::info "服务已重启。"
     fi
-}
-
-sb::set_default_url() {
-    local new_url
-    ui::prompt "请输入新的默认配置下载链接: " new_url -e
-    if [[ -z "$new_url" ]]; then
-        log::warn "链接为空，未修改。"
-        return
-    fi
-    self::persist_var "DEFAULT_CONFIG_URL" "$new_url"
-    DEFAULT_CONFIG_URL="$new_url"
-    log::info "默认链接已更新。"
 }
 
 # >>> src/modules/system.sh
@@ -865,21 +714,39 @@ sb::set_default_url() {
 
 system::full_upgrade() {
     log::info "准备执行系统全量升级 (full-upgrade)..."
-    log::warn "该操作会升级内核及所有依赖发生变化的软件包，建议升级后重启。"
-    ui::confirm "确认继续?" || { log::info "已取消。"; return; }
+    
+    log::step "[1/4] 更新软件源索引..."
+    pkg::update || { log::err "apt-get update 失败，请检查软件源。"; return; }
+
+    log::step "[2/4] 获取可更新的软件包列表..."
+    local up_list
+    up_list=$(apt list --upgradable 2>/dev/null | grep -v 'Listing...')
+    if [[ -z "$up_list" ]]; then
+        log::info "当前系统已是最新，没有需要升级的软件包。"
+        return
+    fi
+    echo
+    echo -e "${BLUE}=== 以下软件包将被升级 ===${PLAIN}"
+    echo "$up_list" | head -n 20
+    local up_count
+    up_count=$(echo "$up_list" | wc -l)
+    if [[ "$up_count" -gt 20 ]]; then
+        echo -e "${YELLOW}... 等共计 ${up_count} 个软件包更新。${PLAIN}"
+    fi
+    echo
+    
+    log::warn "全量升级可能包含内核更新及依赖变化，建议升级后重启。"
+    ui::confirm "确认继续升级上述软件包?" || { log::info "已取消。"; return; }
 
     local apt_opts=(-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef)
 
-    log::step "[1/3] 更新软件源索引..."
-    pkg::update || { log::err "apt-get update 失败，请检查软件源。"; return; }
-
-    log::step "[2/3] 执行 full-upgrade (包含内核升级)..."
+    log::step "[3/4] 执行 full-upgrade (包含内核升级)..."
     if ! pkg::full_upgrade "${apt_opts[@]}"; then
         log::err "full-upgrade 执行失败。"
         return
     fi
 
-    log::step "[3/3] 清理无用依赖..."
+    log::step "[4/4] 清理无用依赖..."
     pkg::autoremove "${apt_opts[@]}"
     pkg::clean
 
@@ -1089,43 +956,46 @@ ufw::delete_rule_interactive() {
     fi
     log::info "已选择规则: $rule_info"
 
-    local target_def port proto other
-    # 跳过 "[ N]" 头部再取下一个 token；awk '{print $2}' 在编号 1-9
-    # ("[ 1]" 内含空格) 时会把 "1]" 当成 $2，造成解析失败
-    target_def=$(echo "$rule_info" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]+([^[:space:]]+).*/\1/')
-    port=$(echo "$target_def" | cut -d'/' -f1)
-    proto=$(echo "$target_def" | cut -d'/' -f2)
-    if [[ -z "$port" || -z "$proto" || "$port" == "$target_def" ]]; then
-        log::err "无法解析规则信息，该规则可能不是标准的 端口/协议 格式"
-        return 1
-    fi
-    other="udp"
-    [[ "$proto" == "udp" ]] && other="tcp"
-
+    local rules_to_delete=("$rule_num")
     local delete_other="n"
-    if echo "$rules_raw" | grep -q "${port}/${other}"; then
-        if ui::confirm "检测到 ${port}/${other} 规则，是否一并删除?"; then
-            delete_other="y"
-        fi
-    fi
 
-    local rules_to_delete=()
-    while IFS= read -r line; do
-        if echo "$line" | grep -q -w "${port}/${proto}"; then
-            local num
-            num=$(echo "$line" | sed 's/^\[ *\([0-9]\+\)\].*/\1/')
-            [[ -n "$num" ]] && rules_to_delete+=("$num")
-        fi
-    done < <(echo "$rules_raw" | grep "^\[")
+    # 提取类似 22/tcp 的结构，不匹配则说明是复杂规则（如应用配置 Nginx Full 或带 IP 的规则）
+    local target_def
+    target_def=$(echo "$rule_info" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]+([0-9]+\/(tcp|udp)).*/\1/' 2>/dev/null)
+    
+    if [[ "$target_def" =~ ^([0-9]+)/(tcp|udp)$ ]]; then
+        local port="${BASH_REMATCH[1]}"
+        local proto="${BASH_REMATCH[2]}"
+        local other="udp"
+        [[ "$proto" == "udp" ]] && other="tcp"
 
-    if [[ "$delete_other" == "y" ]]; then
+        if echo "$rules_raw" | grep -q "${port}/${other}"; then
+            if ui::confirm "检测到对应的 ${port}/${other} 规则，是否一并删除?"; then
+                delete_other="y"
+            fi
+        fi
+        
+        # 如果是标准端口规则，我们通过遍历寻找所有相关编号以解决 IPv4/IPv6 双胞胎问题
+        rules_to_delete=()
         while IFS= read -r line; do
-            if echo "$line" | grep -q -w "${port}/${other}"; then
+            if echo "$line" | grep -q -w "${port}/${proto}"; then
                 local num
                 num=$(echo "$line" | sed 's/^\[ *\([0-9]\+\)\].*/\1/')
                 [[ -n "$num" ]] && rules_to_delete+=("$num")
             fi
         done < <(echo "$rules_raw" | grep "^\[")
+
+        if [[ "$delete_other" == "y" ]]; then
+            while IFS= read -r line; do
+                if echo "$line" | grep -q -w "${port}/${other}"; then
+                    local num
+                    num=$(echo "$line" | sed 's/^\[ *\([0-9]\+\)\].*/\1/')
+                    [[ -n "$num" ]] && rules_to_delete+=("$num")
+                fi
+            done < <(echo "$rules_raw" | grep "^\[")
+        fi
+    else
+        log::info "此为非标准端口规则 (或应用名规则)，将仅删除您选择的单条规则。"
     fi
 
     # 倒序去重，避免删除时编号偏移
@@ -1149,38 +1019,6 @@ ufw::delete_rule_interactive() {
     done
     log::info "更新后的规则列表："
     ufw::_status_numbered
-}
-
-# >>> src/menu/common_software.sh
-# ==============================================================================
-# menu::common_software - 常用软件安装子菜单
-# ==============================================================================
-
-menu::common_software() {
-    while true; do
-        ui::header "常用软件安装 / 卸载"
-        echo
-        echo -e "  ${GREEN}1.${PLAIN} 安装 Caddy Web 服务器"
-        echo -e "  ${GREEN}2.${PLAIN} 安装 Docker CE + Compose 插件"
-        echo -e "  ${GREEN}3.${PLAIN} 一键安装 (Caddy + Docker)"
-        ui::divider
-        echo -e "  ${GREEN}4.${PLAIN} 卸载 Caddy"
-        echo -e "  ${GREEN}5.${PLAIN} 卸载 Docker"
-        echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
-        echo
-        local opt
-        ui::prompt " 请选择: " opt
-        case "$opt" in
-            1) caddy::install ;;
-            2) docker::install ;;
-            3) caddy::install; docker::install ;;
-            4) caddy::uninstall ;;
-            5) docker::uninstall ;;
-            0) return ;;
-            *) log::err "无效选项" ;;
-        esac
-        [[ "$opt" != "0" ]] && ui::pause
-    done
 }
 
 # >>> src/menu/nftbl.sh
@@ -1353,39 +1191,35 @@ menu::main() {
         ui::divider
         echo -e "  ${GREEN}1.${PLAIN} 安装 / 更新 Sing-box"
         echo -e "  ${GREEN}2.${PLAIN} 管理 Sing-box 服务 (启动/停止/日志)"
-        echo -e "  ${GREEN}3.${PLAIN} 更新配置文件"
-        echo -e "  ${GREEN}4.${PLAIN} 修改默认配置下载链接"
+        echo -e "  ${GREEN}3.${PLAIN} 更新 Sing-box 配置文件"
         ui::divider
-        echo -e "  ${GREEN}5.${PLAIN} 系统更新 (full-upgrade 修复内核漏洞)"
-        echo -e "  ${GREEN}6.${PLAIN} 安装常用软件 (Caddy / Docker)"
-        echo -e "  ${GREEN}7.${PLAIN} UFW 防火墙管理"
-        echo -e "  ${GREEN}8.${PLAIN} 系统 TCP 网络优化"
-        echo -e "  ${GREEN}9.${PLAIN} nftables 黑名单 (trick77/nftables-blacklist)"
+        echo -e "  ${GREEN}4.${PLAIN} 系统更新 (full-upgrade 修复内核漏洞)"
+        echo -e "  ${GREEN}5.${PLAIN} UFW 防火墙管理"
+        echo -e "  ${GREEN}6.${PLAIN} 系统 TCP 网络优化"
+        echo -e "  ${GREEN}7.${PLAIN} nftables 黑名单 (trick77/nftables-blacklist)"
         ui::divider
-        echo -e "  ${GREEN}10.${PLAIN} 检查并更新管理脚本"
-        echo -e "  ${GREEN}11.${PLAIN} 卸载脚本 (可选卸载所有组件)"
+        echo -e "  ${GREEN}8.${PLAIN} 检查并更新管理脚本"
+        echo -e "  ${GREEN}9.${PLAIN} 卸载脚本 (可选卸载所有组件)"
         echo -e "  ${GREEN}0.${PLAIN}  退出"
         ui::divider
         echo -e "  ${BLUE}快捷指令${PLAIN}: 输入 ${GREEN}${SCRIPT_NAME}${PLAIN} 即可再次调出此菜单"
         echo
         local opt
-        ui::prompt " 请输入选项 [0-11]: " opt
+        ui::prompt " 请输入选项 [0-9]: " opt
         case "$opt" in
             1)  sb::install ;;
-            2)  menu::sb_service ;;
-            3)  sb::apply_config "$DEFAULT_CONFIG_URL" ;;
-            4)  sb::set_default_url ;;
-            5)  system::full_upgrade ;;
-            6)  menu::common_software ;;
-            7)  menu::ufw ;;
-            8)  tcp::run ;;
-            9)  menu::nftbl ;;
-            10) self::check_update "$@" ;;
-            11) self::uninstall ;;
+            2)  sb::require_installed && menu::sb_service ;;
+            3)  sb::require_installed && sb::update_config_interactive ;;
+            4)  system::full_upgrade ;;
+            5)  menu::ufw ;;
+            6)  tcp::run ;;
+            7)  menu::nftbl ;;
+            8)  self::check_update "$@" ;;
+            9)  self::uninstall ;;
             0)  exit 0 ;;
             *)  log::err "无效选项，请重新输入" ;;
         esac
-        [[ "$opt" != "10" ]] && ui::pause
+        [[ "$opt" != "8" ]] && ui::pause
     done
 }
 

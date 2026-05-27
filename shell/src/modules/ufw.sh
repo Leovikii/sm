@@ -182,43 +182,46 @@ ufw::delete_rule_interactive() {
     fi
     log::info "已选择规则: $rule_info"
 
-    local target_def port proto other
-    # 跳过 "[ N]" 头部再取下一个 token；awk '{print $2}' 在编号 1-9
-    # ("[ 1]" 内含空格) 时会把 "1]" 当成 $2，造成解析失败
-    target_def=$(echo "$rule_info" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]+([^[:space:]]+).*/\1/')
-    port=$(echo "$target_def" | cut -d'/' -f1)
-    proto=$(echo "$target_def" | cut -d'/' -f2)
-    if [[ -z "$port" || -z "$proto" || "$port" == "$target_def" ]]; then
-        log::err "无法解析规则信息，该规则可能不是标准的 端口/协议 格式"
-        return 1
-    fi
-    other="udp"
-    [[ "$proto" == "udp" ]] && other="tcp"
-
+    local rules_to_delete=("$rule_num")
     local delete_other="n"
-    if echo "$rules_raw" | grep -q "${port}/${other}"; then
-        if ui::confirm "检测到 ${port}/${other} 规则，是否一并删除?"; then
-            delete_other="y"
-        fi
-    fi
 
-    local rules_to_delete=()
-    while IFS= read -r line; do
-        if echo "$line" | grep -q -w "${port}/${proto}"; then
-            local num
-            num=$(echo "$line" | sed 's/^\[ *\([0-9]\+\)\].*/\1/')
-            [[ -n "$num" ]] && rules_to_delete+=("$num")
-        fi
-    done < <(echo "$rules_raw" | grep "^\[")
+    # 提取类似 22/tcp 的结构，不匹配则说明是复杂规则（如应用配置 Nginx Full 或带 IP 的规则）
+    local target_def
+    target_def=$(echo "$rule_info" | sed -E 's/^\[[[:space:]]*[0-9]+\][[:space:]]+([0-9]+\/(tcp|udp)).*/\1/' 2>/dev/null)
+    
+    if [[ "$target_def" =~ ^([0-9]+)/(tcp|udp)$ ]]; then
+        local port="${BASH_REMATCH[1]}"
+        local proto="${BASH_REMATCH[2]}"
+        local other="udp"
+        [[ "$proto" == "udp" ]] && other="tcp"
 
-    if [[ "$delete_other" == "y" ]]; then
+        if echo "$rules_raw" | grep -q "${port}/${other}"; then
+            if ui::confirm "检测到对应的 ${port}/${other} 规则，是否一并删除?"; then
+                delete_other="y"
+            fi
+        fi
+        
+        # 如果是标准端口规则，我们通过遍历寻找所有相关编号以解决 IPv4/IPv6 双胞胎问题
+        rules_to_delete=()
         while IFS= read -r line; do
-            if echo "$line" | grep -q -w "${port}/${other}"; then
+            if echo "$line" | grep -q -w "${port}/${proto}"; then
                 local num
                 num=$(echo "$line" | sed 's/^\[ *\([0-9]\+\)\].*/\1/')
                 [[ -n "$num" ]] && rules_to_delete+=("$num")
             fi
         done < <(echo "$rules_raw" | grep "^\[")
+
+        if [[ "$delete_other" == "y" ]]; then
+            while IFS= read -r line; do
+                if echo "$line" | grep -q -w "${port}/${other}"; then
+                    local num
+                    num=$(echo "$line" | sed 's/^\[ *\([0-9]\+\)\].*/\1/')
+                    [[ -n "$num" ]] && rules_to_delete+=("$num")
+                fi
+            done < <(echo "$rules_raw" | grep "^\[")
+        fi
+    else
+        log::info "此为非标准端口规则 (或应用名规则)，将仅删除您选择的单条规则。"
     fi
 
     # 倒序去重，避免删除时编号偏移
