@@ -31,9 +31,9 @@ ui::confirm() {
 ui::prompt() {
     local prompt="$1" varname="$2" flag="${3:-}"
     if [[ "$flag" == "-e" ]]; then
-        read -e -r -p "$prompt" "$varname" || exit 130
+        read -e -r -p "$prompt" "${varname?}" || exit 130
     else
-        read -r -p "$prompt" "$varname" || exit 130
+        read -r -p "$prompt" "${varname?}" || exit 130
     fi
 }
 
