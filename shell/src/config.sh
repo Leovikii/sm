@@ -3,11 +3,12 @@
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.2.2"
+SCRIPT_VERSION="3.2.3"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
-DEFAULT_CONFIG_URL="https://example.com/config.json"
+CONFIG_URL_FILE="/var/lib/sm/default_url"
+CONFIG_DATE_FILE="/var/lib/sm/config_last_update"
 TCPX_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcpx.sh"
 
 # 用 $'...' 在赋值时就把 \033 解析成真 ESC 字节，

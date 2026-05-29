@@ -48,9 +48,6 @@ self::check_update() {
         return 1
     fi
 
-    local old_url
-    old_url=$(self::read_var "DEFAULT_CONFIG_URL")
-    [[ -n "$old_url" ]] && self::persist_var "DEFAULT_CONFIG_URL" "$old_url" "$temp_script"
 
     chmod +x "$temp_script"
     mv -f "$temp_script" "$INSTALL_PATH"
