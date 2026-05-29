@@ -80,9 +80,9 @@ ui::confirm() {
 ui::prompt() {
     local prompt="$1" varname="$2" flag="${3:-}"
     if [[ "$flag" == "-e" ]]; then
-        read -e -r -p "$prompt" "$varname" || exit 130
+        read -e -r -p "$prompt" "${varname?}" || exit 130
     else
-        read -r -p "$prompt" "$varname" || exit 130
+        read -r -p "$prompt" "${varname?}" || exit 130
     fi
 }
 
@@ -511,7 +511,7 @@ nftbl::edit_config() {
     if [[ -z "$editor" ]]; then
         if sys::has_cmd nano; then editor=nano
         elif sys::has_cmd vim; then editor=vim
-        elif sys::has_cmd vi;  then editor=vi
+        elif sys::has_cmd vi;  then editor="vi"
         else
             log::err "未找到可用编辑器 (nano/vim/vi)，请手动编辑 ${NFTBL_CONF_FILE}"
             return 1
