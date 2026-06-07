@@ -28,15 +28,31 @@ jobs:
       - name: Build sm.sh
         run: bash shell/build.sh
 
-      - name: Commit and push if changed
+      - name: Create Release
         if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add -f shell/sm.sh
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
+          # Extract version from config.sh
+          VERSION=$(grep '^SCRIPT_VERSION=' shell/src/config.sh | cut -d'"' -f2)
+          if [ -z "$VERSION" ]; then
+            echo "Failed to extract version from config.sh"
+            exit 1
           fi
-          git commit -m "chore: auto build sm.sh [skip ci]"
-          git push
+          
+          TAG="v$VERSION"
+          
+          # Check if it's a pre-release
+          PRERELEASE=""
+          if [[ "$VERSION" =~ alpha|beta|rc|test ]]; then
+            PRERELEASE="--prerelease"
+            echo "Version $VERSION is a pre-release."
+          fi
+          
+          # Delete existing release/tag if it exists to allow overwriting the same version during dev
+          gh release delete "$TAG" --yes || true
+          git push --delete origin "$TAG" || true
+          
+          # Create new release
+          echo "Creating release $TAG..."
+          gh release create "$TAG" shell/sm.sh --title "Release $TAG" --generate-notes $PRERELEASE

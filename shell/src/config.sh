@@ -5,7 +5,7 @@
 SCRIPT_NAME="sm.sh"
 SCRIPT_VERSION="3.2.4"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
-SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
+SCRIPT_UPDATE_URL="https://api.github.com/repos/Leovikii/sm/releases"
 
 CONFIG_URL_FILE="/var/lib/sm/default_url"
 CONFIG_DATE_FILE="/var/lib/sm/config_last_update"

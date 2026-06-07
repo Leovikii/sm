@@ -5,11 +5,11 @@ A single-file, modular toolkit for Debian/Ubuntu servers — install Sing-box, h
 ## Quick install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh -o sm.sh && bash sm.sh
+curl -fsSL https://github.com/Leovikii/sm/releases/latest/download/sm.sh -o sm.sh && bash sm.sh
 ```
 
 ```sh
-wget -qO sm.sh https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh && bash sm.sh
+wget -qO sm.sh https://github.com/Leovikii/sm/releases/latest/download/sm.sh && bash sm.sh
 ```
 
 On first run the script copies itself to `/usr/local/bin/sm.sh`. After that, just type:

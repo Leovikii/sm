@@ -22,40 +22,133 @@ self::read_var() {
     grep "^${key}=" "$INSTALL_PATH" 2>/dev/null | head -n 1 | cut -d'"' -f2
 }
 
+self::compare_version() {
+    local v_local=$1
+    local v_remote=$2
+    local base_local="${v_local%%-*}"
+    local base_remote="${v_remote%%-*}"
+    local tag_local="${v_local#*-}"
+    [[ "$tag_local" == "$v_local" ]] && tag_local=""
+    local tag_remote="${v_remote#*-}"
+    [[ "$tag_remote" == "$v_remote" ]] && tag_remote=""
+
+    if [[ "$base_local" != "$base_remote" ]]; then
+        local highest_base
+        highest_base=$(printf "%s\n%s\n" "$base_local" "$base_remote" | sort -V | tail -n 1)
+        if [[ "$highest_base" == "$base_remote" ]]; then
+            echo "1"
+        else
+            echo "0"
+        fi
+        return
+    fi
+
+    if [[ -z "$tag_local" && -n "$tag_remote" ]]; then
+        echo "0"
+    elif [[ -n "$tag_local" && -z "$tag_remote" ]]; then
+        echo "1"
+    elif [[ -n "$tag_local" && -n "$tag_remote" ]]; then
+        local highest_tag
+        highest_tag=$(printf "%s\n%s\n" "$tag_local" "$tag_remote" | sort -V | tail -n 1)
+        if [[ "$highest_tag" == "$tag_remote" && "$tag_local" != "$tag_remote" ]]; then
+            echo "1"
+        else
+            echo "0"
+        fi
+    else
+        echo "0"
+    fi
+}
+
 self::check_update() {
     log::info "正在检查脚本更新..."
 
-    local remote_version
-    remote_version=$(net::fetch "$SCRIPT_UPDATE_URL" | grep "^SCRIPT_VERSION=" | head -n 1 | cut -d'"' -f2)
-
-    if [[ -z "$remote_version" ]]; then
-        log::err "获取远程版本失败，请检查网络连接。"
+    local api_resp
+    api_resp=$(net::fetch "$SCRIPT_UPDATE_URL")
+    if [[ -z "$api_resp" ]]; then
+        log::err "获取远程版本失败，请检查网络连接或 Github API 限制。"
         return 1
     fi
-    if [[ "$SCRIPT_VERSION" == "$remote_version" ]]; then
+
+    local stable_version=""
+    local beta_version=""
+    
+    local tag_list
+    tag_list=$(echo "$api_resp" | grep -E '"tag_name":|"prerelease":' | head -n 40)
+    
+    local current_tag=""
+    while read -r line; do
+        if [[ "$line" =~ \"tag_name\":\ *\"v(.*)\" ]]; then
+            current_tag="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ \"prerelease\":\ *(true|false) ]]; then
+            local is_prerelease="${BASH_REMATCH[1]}"
+            if [[ "$is_prerelease" == "false" && -z "$stable_version" ]]; then
+                stable_version="$current_tag"
+            elif [[ "$is_prerelease" == "true" && -z "$beta_version" ]]; then
+                beta_version="$current_tag"
+            fi
+            if [[ -n "$stable_version" && -n "$beta_version" ]]; then
+                break
+            fi
+        fi
+    done <<< "$tag_list"
+
+    if [[ -z "$stable_version" && -z "$beta_version" ]]; then
+        log::err "解析远程版本库失败，没有找到可用的 Release。"
+        return 1
+    fi
+
+    local is_stable_newer=0
+    [[ -n "$stable_version" ]] && is_stable_newer=$(self::compare_version "$SCRIPT_VERSION" "$stable_version")
+
+    local is_beta_newer=0
+    [[ -n "$beta_version" ]] && is_beta_newer=$(self::compare_version "$SCRIPT_VERSION" "$beta_version")
+
+    if [[ "$is_stable_newer" == "0" && "$is_beta_newer" == "0" ]]; then
         log::info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
         return 0
     fi
 
-    # 替换横杠为波浪号以利用 GNU sort -V 对预发布版本(alpha/beta/rc)的排序特性
-    # 原理：3.2.4~beta.1 会被 sort -V 认为老于 3.2.4
-    local local_fmt="${SCRIPT_VERSION//-/~}"
-    local remote_fmt="${remote_version//-/~}"
-    local highest
-    highest=$(printf "%s\n%s\n" "$local_fmt" "$remote_fmt" | sort -V | tail -n 1)
+    local target_version=""
+    
+    if [[ "$is_stable_newer" == "1" && "$is_beta_newer" == "1" ]]; then
+        local beta_gt_stable=$(self::compare_version "$stable_version" "$beta_version")
+        if [[ "$beta_gt_stable" == "1" ]]; then
+            log::info "发现新版本！"
+            echo -e "  [1] 正式版: ${GREEN}v${stable_version}${PLAIN}"
+            echo -e "  [2] 测试版: ${YELLOW}v${beta_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
+            local choice
+            read -p "请选择要更新的版本 (1/2/按回车取消): " choice
+            case "$choice" in
+                1) target_version="$stable_version" ;;
+                2) target_version="$beta_version" ;;
+                *) log::info "已取消更新。"; return 0 ;;
+            esac
+        else
+            target_version="$stable_version"
+            log::info "发现新正式版本: ${GREEN}v${target_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
+            ui::confirm "是否更新管理脚本?" || { log::info "已取消更新。"; return 0; }
+        fi
+    elif [[ "$is_stable_newer" == "1" ]]; then
+        target_version="$stable_version"
+        log::info "发现新正式版本: ${GREEN}v${target_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
+        ui::confirm "是否更新管理脚本?" || { log::info "已取消更新。"; return 0; }
+    elif [[ "$is_beta_newer" == "1" ]]; then
+        target_version="$beta_version"
+        log::info "发现新测试版本: ${YELLOW}v${target_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
+        ui::confirm "是否更新到测试版?" || { log::info "已取消更新。"; return 0; }
+    fi
 
-    if [[ "$highest" != "$remote_fmt" ]]; then
-        log::info "当前本地版本 (v${SCRIPT_VERSION}) 高于或等于远端版本 (v${remote_version})，无需更新。"
+    if [[ -z "$target_version" ]]; then
         return 0
     fi
 
-    log::info "发现新版本: ${GREEN}v${remote_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
-    ui::confirm "是否更新管理脚本?" || { log::info "已取消更新。"; return 0; }
+    local download_url="https://github.com/Leovikii/sm/releases/download/v${target_version}/sm.sh"
 
     mkdir -p "$TMP_DIR"
+    log::info "正在下载新版脚本 v${target_version}..."
     local temp_script="$TMP_DIR/new_sm.sh"
-    log::info "正在下载新版本..."
-    if ! net::download "$SCRIPT_UPDATE_URL" "$temp_script"; then
+    if ! net::download "$download_url" "$temp_script"; then
         log::err "下载新版本文件失败。"
         return 1
     fi
