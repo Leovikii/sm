@@ -31,7 +31,10 @@ sb::install() {
         "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" \
         /etc/apt/sources.list.d/sagernet.list
 
-    pkg::update quiet
+    if ! pkg::update quiet; then
+        log::warn "apt-get update 静默失败，尝试输出详细错误以供排查..."
+        pkg::update || { log::err "系统软件源刷新失败，无法获取到最新版本列表。"; return 1; }
+    fi
     if pkg::install sing-box; then
         svc::ensure_running sing-box "Sing-box 安装成功并已启动！"
     else

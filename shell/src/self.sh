@@ -37,6 +37,18 @@ self::check_update() {
         return 0
     fi
 
+    # 替换横杠为波浪号以利用 GNU sort -V 对预发布版本(alpha/beta/rc)的排序特性
+    # 原理：3.2.4~beta.1 会被 sort -V 认为老于 3.2.4
+    local local_fmt="${SCRIPT_VERSION//-/~}"
+    local remote_fmt="${remote_version//-/~}"
+    local highest
+    highest=$(printf "%s\n%s\n" "$local_fmt" "$remote_fmt" | sort -V | tail -n 1)
+
+    if [[ "$highest" != "$remote_fmt" ]]; then
+        log::info "当前本地版本 (v${SCRIPT_VERSION}) 高于或等于远端版本 (v${remote_version})，无需更新。"
+        return 0
+    fi
+
     log::info "发现新版本: ${GREEN}v${remote_version}${PLAIN} (当前版本: v${SCRIPT_VERSION})"
     ui::confirm "是否更新管理脚本?" || { log::info "已取消更新。"; return 0; }
 
