@@ -85,6 +85,10 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=${NFTBL_SCRIPT_PATH} ${NFTBL_CONF_FILE}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
     cat > "$NFTBL_TIMER" <<EOF
@@ -101,12 +105,13 @@ Unit=${NFTBL_SERVICE_NAME}
 WantedBy=timers.target
 EOF
 
-    log::step "[6/6] 启用每月自动更新 timer..."
+    log::step "[6/6] 启用开机自启与每月更新定时器..."
     systemctl daemon-reload
-    if systemctl enable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1; then
-        log::info "${NFTBL_TIMER_NAME} 已启用 (每月自动更新)"
+    if systemctl enable --now "$NFTBL_SERVICE_NAME" >/dev/null 2>&1 && \
+       systemctl enable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1; then
+        log::info "系统服务及 Timer 已启用 (开机自启加载 + 每月更新)"
     else
-        log::err "timer 启用失败，请手动检查 systemctl status ${NFTBL_TIMER_NAME}"
+        log::err "服务启用失败，请手动检查 systemctl status ${NFTBL_SERVICE_NAME}"
     fi
 
     echo
@@ -191,6 +196,7 @@ nftbl::uninstall() {
     ui::confirm "确认卸载?" || { log::info "取消"; return; }
 
     systemctl disable --now "$NFTBL_TIMER_NAME" >/dev/null 2>&1 || true
+    systemctl disable --now "$NFTBL_SERVICE_NAME" >/dev/null 2>&1 || true
     rm -f "$NFTBL_TIMER" "$NFTBL_SERVICE"
     systemctl daemon-reload
 
