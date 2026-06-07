@@ -21,14 +21,6 @@ sys::require_debian() {
     fi
 }
 
-sys::distro_id() {
-    [[ -f /etc/os-release ]] && (. /etc/os-release && echo "${ID:-debian}") || echo "debian"
-}
-
-sys::distro_codename() {
-    [[ -f /etc/os-release ]] && (. /etc/os-release && echo "${VERSION_CODENAME:-}")
-}
-
 sys::uptime() {
     sys::has_cmd uptime && uptime -p 2>/dev/null | sed 's/up //' || echo "N/A"
 }

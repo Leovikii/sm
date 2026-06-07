@@ -12,54 +12,6 @@ self::install_shortcut() {
     exec "$INSTALL_PATH" "$@"
 }
 
-self::persist_var() {
-    local key="$1" val="$2" path="${3:-$INSTALL_PATH}"
-    sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$path"
-}
-
-self::read_var() {
-    local key="$1"
-    grep "^${key}=" "$INSTALL_PATH" 2>/dev/null | head -n 1 | cut -d'"' -f2
-}
-
-self::compare_version() {
-    local v_local=$1
-    local v_remote=$2
-    local base_local="${v_local%%-*}"
-    local base_remote="${v_remote%%-*}"
-    local tag_local="${v_local#*-}"
-    [[ "$tag_local" == "$v_local" ]] && tag_local=""
-    local tag_remote="${v_remote#*-}"
-    [[ "$tag_remote" == "$v_remote" ]] && tag_remote=""
-
-    if [[ "$base_local" != "$base_remote" ]]; then
-        local highest_base
-        highest_base=$(printf "%s\n%s\n" "$base_local" "$base_remote" | sort -V | tail -n 1)
-        if [[ "$highest_base" == "$base_remote" ]]; then
-            echo "1"
-        else
-            echo "0"
-        fi
-        return
-    fi
-
-    if [[ -z "$tag_local" && -n "$tag_remote" ]]; then
-        echo "0"
-    elif [[ -n "$tag_local" && -z "$tag_remote" ]]; then
-        echo "1"
-    elif [[ -n "$tag_local" && -n "$tag_remote" ]]; then
-        local highest_tag
-        highest_tag=$(printf "%s\n%s\n" "$tag_local" "$tag_remote" | sort -V | tail -n 1)
-        if [[ "$highest_tag" == "$tag_remote" && "$tag_local" != "$tag_remote" ]]; then
-            echo "1"
-        else
-            echo "0"
-        fi
-    else
-        echo "0"
-    fi
-}
-
 self::check_update() {
     log::info "正在检查脚本更新..."
 
@@ -70,28 +22,22 @@ self::check_update() {
         return 1
     fi
 
+    if ! echo "$api_resp" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        local msg
+        msg=$(echo "$api_resp" | jq -r '.message // empty')
+        if [[ -n "$msg" ]]; then
+            log::err "GitHub API 返回错误: $msg"
+        else
+            log::err "获取远程版本失败，API 返回了非预期的格式。"
+        fi
+        return 1
+    fi
+
     local stable_version=""
     local beta_version=""
     
-    local tag_list
-    tag_list=$(echo "$api_resp" | grep -E '"tag_name":|"prerelease":' | head -n 40)
-    
-    local current_tag=""
-    while read -r line; do
-        if [[ "$line" =~ \"tag_name\":\ *\"v(.*)\" ]]; then
-            current_tag="${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ \"prerelease\":\ *(true|false) ]]; then
-            local is_prerelease="${BASH_REMATCH[1]}"
-            if [[ "$is_prerelease" == "false" && -z "$stable_version" ]]; then
-                stable_version="$current_tag"
-            elif [[ "$is_prerelease" == "true" && -z "$beta_version" ]]; then
-                beta_version="$current_tag"
-            fi
-            if [[ -n "$stable_version" && -n "$beta_version" ]]; then
-                break
-            fi
-        fi
-    done <<< "$tag_list"
+    stable_version=$(echo "$api_resp" | jq -r '[.[] | select(.prerelease == false)] | .[0].tag_name // empty' | sed 's/^v//')
+    beta_version=$(echo "$api_resp" | jq -r '[.[] | select(.prerelease == true)] | .[0].tag_name // empty' | sed 's/^v//')
 
     if [[ -z "$stable_version" && -z "$beta_version" ]]; then
         log::err "解析远程版本库失败，没有找到可用的 Release。"
@@ -99,10 +45,14 @@ self::check_update() {
     fi
 
     local is_stable_newer=0
-    [[ -n "$stable_version" ]] && is_stable_newer=$(self::compare_version "$SCRIPT_VERSION" "$stable_version")
+    if [[ -n "$stable_version" ]] && dpkg --compare-versions "$stable_version" "gt" "$SCRIPT_VERSION"; then
+        is_stable_newer=1
+    fi
 
     local is_beta_newer=0
-    [[ -n "$beta_version" ]] && is_beta_newer=$(self::compare_version "$SCRIPT_VERSION" "$beta_version")
+    if [[ -n "$beta_version" ]] && dpkg --compare-versions "$beta_version" "gt" "$SCRIPT_VERSION"; then
+        is_beta_newer=1
+    fi
 
     if [[ "$is_stable_newer" == "0" && "$is_beta_newer" == "0" ]]; then
         log::info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
@@ -112,7 +62,10 @@ self::check_update() {
     local target_version=""
     
     if [[ "$is_stable_newer" == "1" && "$is_beta_newer" == "1" ]]; then
-        local beta_gt_stable=$(self::compare_version "$stable_version" "$beta_version")
+        local beta_gt_stable=0
+        if dpkg --compare-versions "$beta_version" "gt" "$stable_version"; then
+            beta_gt_stable=1
+        fi
         if [[ "$beta_gt_stable" == "1" ]]; then
             log::info "发现新版本！"
             echo -e "  [1] 正式版: ${GREEN}v${stable_version}${PLAIN}"
