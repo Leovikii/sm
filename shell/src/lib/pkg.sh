@@ -25,7 +25,7 @@ pkg::ensure_deps() {
     [[ $_DEPS_CHECKED -eq 1 ]] && return 0
     if [[ -f "$DEPS_FLAG" ]]; then _DEPS_CHECKED=1; return 0; fi
 
-    local deps="curl wget tar ca-certificates gnupg"
+    local deps="curl wget jq tar ca-certificates gnupg"
     local missing=""
     for dep in $deps; do
         sys::has_cmd "$dep" || missing="$missing $dep"
