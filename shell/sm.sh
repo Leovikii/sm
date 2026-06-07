@@ -12,7 +12,7 @@ set -uo pipefail
 # ==============================================================================
 
 SCRIPT_NAME="sm.sh"
-SCRIPT_VERSION="3.2.3"
+SCRIPT_VERSION="3.2.4"
 INSTALL_PATH="/usr/local/bin/$SCRIPT_NAME"
 SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/Leovikii/sm/main/shell/sm.sh"
 
@@ -298,6 +298,18 @@ self::check_update() {
     fi
     if [[ "$SCRIPT_VERSION" == "$remote_version" ]]; then
         log::info "当前已是最新版本 (v${SCRIPT_VERSION})，无需更新。"
+        return 0
+    fi
+
+    # 替换横杠为波浪号以利用 GNU sort -V 对预发布版本(alpha/beta/rc)的排序特性
+    # 原理：3.2.4~beta.1 会被 sort -V 认为老于 3.2.4
+    local local_fmt="${SCRIPT_VERSION//-/~}"
+    local remote_fmt="${remote_version//-/~}"
+    local highest
+    highest=$(printf "%s\n%s\n" "$local_fmt" "$remote_fmt" | sort -V | tail -n 1)
+
+    if [[ "$highest" != "$remote_fmt" ]]; then
+        log::info "当前本地版本 (v${SCRIPT_VERSION}) 高于或等于远端版本 (v${remote_version})，无需更新。"
         return 0
     fi
 
@@ -615,7 +627,10 @@ sb::install() {
         "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/sagernet.asc] https://deb.sagernet.org/ * *" \
         /etc/apt/sources.list.d/sagernet.list
 
-    pkg::update quiet
+    if ! pkg::update quiet; then
+        log::warn "apt-get update 静默失败，尝试输出详细错误以供排查..."
+        pkg::update || { log::err "系统软件源刷新失败，无法获取到最新版本列表。"; return 1; }
+    fi
     if pkg::install sing-box; then
         svc::ensure_running sing-box "Sing-box 安装成功并已启动！"
     else
